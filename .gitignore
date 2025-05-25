@@ -1,3 +1,9 @@
-virtual
+# At the top level of reminder_agent/
+cat <<EOF >> .gitignore
+# ignore local environment & DB
 .env
-client_secret.json
+db.sqlite3
+
+# ignore Google client JSON
+*.json
+EOF
