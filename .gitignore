@@ -3,6 +3,7 @@ cat <<EOF >> .gitignore
 # ignore local environment & DB
 .env
 db.sqlite3
+.virtual
 
 # ignore Google client JSON
 *.json
