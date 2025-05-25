@@ -1,0 +1,71 @@
+{% load static %}
+{% load static socialaccount %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign Up</title>
+  <link rel="stylesheet" href="{% static 'authentication/css/login.css' %}">
+</head>
+<body>
+  <div class="container">
+    <img src="{% static 'authentication/images/calendar.png' %}" alt="App Logo" class="logo">
+    <div class="app-name">AI Reminder Agent</div>
+    <p class="blurb">Create your account to start managing AI-powered reminders.</p>
+
+    <form method="post" class="auth-form">
+      {% csrf_token %}
+
+      {{ form.full_name }}
+      {{ form.email }}
+
+      <div class="password-wrapper">
+        {{ form.password1 }}
+        <button type="button" class="toggle-password"
+                data-target="id_password1"
+                data-show-icon="{% static 'authentication/images/show.png' %}"
+                data-hide-icon="{% static 'authentication/images/hide.png' %}">
+          <img src="{% static 'authentication/images/hide.png' %}" alt="Toggle visibility">
+        </button>
+      </div>
+
+      <div class="password-wrapper">
+        {{ form.password2 }}
+        <button type="button" class="toggle-password"
+                data-target="id_password2"
+                data-show-icon="{% static 'authentication/images/show.png' %}"
+                data-hide-icon="{% static 'authentication/images/hide.png' %}">
+          <img src="{% static 'authentication/images/hide.png' %}" alt="Toggle visibility">
+        </button>
+      </div>
+      
+      <button type="submit" class="btn btn-login">Sign up</button>
+    </form>
+
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}
+          <div class="message {{ message.tags }}">
+            {{ message }}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <!-- Google OAuth -->
+    <form action="{% provider_login_url 'google' process='signup' next='/home/' %}"
+          method="post" class="oauth-form">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-google">
+        <img src="{% static 'authentication/images/google.png' %}" alt="Google">
+        Sign up with Google
+      </button>
+    </form>
+    <p class="sign-up-text">Already have an account? <a href="{% url 'login' %}">Log in here</a></p>
+  </div>
+
+  <script src="{% static 'authentication/js/login.js' %}"></script>
+
+</body>
+</html>

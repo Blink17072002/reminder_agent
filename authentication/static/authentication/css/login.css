@@ -1,0 +1,205 @@
+/* Reset defaults */
+* {
+    margin: 0;
+    padding: 0; 
+    box-sizing: border-box; 
+}
+body, html {
+    height: 100%; 
+    font-family: Arial, sans-serif; 
+    background-color: #f5f7fa; 
+    display: flex; 
+    align-items: center; justify-content: center; 
+}
+.container { 
+    text-align: center; 
+    background: #fff; padding: 40px; 
+    border-radius: 8px; 
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); 
+    width: 100%; 
+    max-width: 480px; 
+}
+.logo { 
+    width: 80px; 
+    height: 80px; 
+    margin: 0 auto 16px; 
+}
+.app-name { 
+    font-size: 1.5rem; 
+    font-weight: bold; 
+    color: #333; 
+    margin-bottom: 24px; 
+}
+.blurb { 
+    font-size: 0.9rem; 
+    color: #555; 
+    margin-top: 16px; 
+    line-height: 1.4; 
+}
+/* Form Styles */
+.auth-form { 
+    display: flex; 
+    flex-direction: column; 
+    gap: 12px; 
+    margin-top: 24px; 
+}
+.auth-input { 
+    padding: 10px; 
+    font-size: 1rem; 
+    border: 1px solid #ccc; 
+    border-radius: 4px; 
+    width: 100%;
+}
+.auth-input:focus {
+    border-color: #4285F4;
+    /* box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.2); */
+    outline: none;
+}
+.btn { 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    color: #fff; 
+    border: none; 
+    border-radius: 4px; 
+    font-size: 1rem; 
+    cursor: pointer; 
+    padding: 12px; 
+    width: 100%; 
+    transition: background 0.3s; 
+    text-decoration: none; 
+}
+.btn-google {
+    background-color: transparent;
+    border: 1px solid #4285F4;
+    color: #4285F4;
+    margin-top: 12px;
+  }
+.btn-google:hover {
+    background-color: rgba(66, 133, 244, 0.1);
+}
+
+.btn-auth { 
+    background-color: #4CAF50; 
+    margin-top: 12px; 
+}
+.btn-auth:hover { 
+    background-color: #43a047; 
+}
+.btn-auth.secondary { 
+    background-color: #ff9800; 
+}
+.btn-auth.secondary:hover { 
+    background-color: #fb8c00; 
+}
+.btn img, .btn-google img { 
+    width: 20px; 
+    height: 20px; 
+    margin-right: 8px; 
+}
+
+.btn-login {
+    background-color: #4285F4;
+    color: #fff;
+    margin-top: 12px;
+}
+  .btn-login:hover {
+    background-color: #357ae8;
+}
+.sign-up-text {
+    margin-top: 16px;
+    font-size: 0.9rem;
+    color: #555;
+}
+.sign-up-text a {
+    color: #4285F4;
+    text-decoration: none;
+    transition: color 0.5s ease, text-decoration-color 0.5s ease;
+}
+.sign-up-text a:hover {
+    color: #356ac3; 
+    text-decoration: underline;
+}  
+
+
+
+
+/* ------------------------------- */
+.password-wrapper {
+    position: relative;
+    width: 100%;
+}
+/* Ensure input spans full width and leaves space for the icon */
+.password-wrapper .auth-input {
+    width: 100%;
+    padding-right: 40px;
+}
+/* Positioning the toggle button inside the input */
+.toggle-password {
+    position: absolute;
+    top: 50%;
+    right: 12px;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+}
+.toggle-password img {
+    width: 20px;
+    height: 20px;
+}
+
+/* -------------------------------------
+   Message container (Django messages)
+   ------------------------------------- */
+.messages {
+  margin-top: 16px;
+}
+.message {
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+}
+/* variants by message.tags */
+.message.success {
+  background-color: #e6ffed;
+  color: #2e7d32;
+  border: 1px solid #a5d6a7;
+}
+.message.error {
+  background-color: #ffebee;
+  color: #c62828;
+  border: 1px solid #ef9a9a;
+}
+.message.info {
+  background-color: #e3f2fd;
+  color: #1565c0;
+  border: 1px solid #90caf9;
+}
+.message.warning {
+  background-color: #fff8e1;
+  color: #f57f17;
+  border: 1px solid #ffe082;
+}
+
+/* -------------------------------
+   Inline field‐level error styling
+   ------------------------------- */
+.error {
+  color: #c62828;
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
+
+/* Default Django errorlist */
+.errorlist {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 0;
+}
+.errorlist li {
+  color: #c62828;
+  font-size: 0.8rem;
+}
