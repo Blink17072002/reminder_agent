@@ -1,0 +1,1 @@
+<form id="chat-form" action="{% if current_convo %}{% url 'home_page:assistant' current_convo.id %}{% else %}{% url 'home_page:assistant' %}{% endif %}">

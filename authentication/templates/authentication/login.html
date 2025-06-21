@@ -31,7 +31,7 @@
     {% endif %}
 
     <!-- Google OAuth -->
-    <form action="{% provider_login_url 'google' process='signup' next='/home/' %}"
+    <form action="{% provider_login_url 'google' process='login' next='/home/' %}"
           method="post" class="oauth-form">
       {% csrf_token %}
       <button type="submit" class="btn btn-google">

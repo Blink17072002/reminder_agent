@@ -56,7 +56,7 @@ INSTALLED_APPS = [
 
 
 
-SITE_ID = 3
+SITE_ID = 4
 
 LOGIN_REDIRECT_URL = '/home/'
 ACCOUNT_LOGIN_METHODS = {'email'}  # replacing ACCOUNT_AUTHENTICATION_METHOD
@@ -67,17 +67,16 @@ ACCOUNT_EMAIL_VERIFICATION = 'optional'
 
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
-        'SCOPE': ['profile', 'email'],
+        'SCOPE': [
+            'profile', 
+            'email',
+            # "https://www.googleapis.com/auth/calendar.events",
+            # "https://www.googleapis.com/auth/calendar.readonly",
+            ],
         'AUTH_PARAMS': {
-            'access_type': 'online',
+            'access_type': 'offline',
             'prompt': 'select_account'
         },
-
-        # 'APP':{
-        #     'client_id': os.getenv('GOOGLE_CLIENT_ID'),
-        #     'secret': os.getenv('GOOGLE_CLIENT_SECRET'),
-        #     'key': ''
-        # }
     }
 }
 

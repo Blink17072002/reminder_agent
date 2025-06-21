@@ -62,11 +62,15 @@ body, html {
 }
 .sidebar li {
   padding: 8px 0;
-  padding-left: 25px; 
+  padding-left: 25px;
   padding-right: 5px;
   margin-top: 3px;
   cursor: pointer;
   color: #202124;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 .sidebar .recents ul li{
   margin-top: 2px;
@@ -92,9 +96,8 @@ body, html {
   text-decoration: none;
   color: #202124;
   display: block;
-  width: 100%;
-  padding: 0;
-  border-radius: 100%;
+  flex-grow: 1;
+  padding: 8px 5px 8px 0;
   transition: background 0.2s;
   font-size: 15px;
 }
@@ -165,36 +168,63 @@ body, html {
   justify-content: center;
   font-weight: bold;
   margin-right: 12px;
+  /* color: #fff; */
+  font-size: 18px;
+  line-height: 36px;
+  overflow: hidden;
 }
 .user-avatar {
   background: #6e49ff;
   color: #fff;
 }
-.bot-avatar {
+.agent-avatar {
   background: #f7f7f8;
   color: #5f6368;
 }
+.message-content {
+  flex-grow: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
 .bubble {
   max-width: 80%;
-  padding: 10px 14px;
   border-radius: 12px;
-  line-height: 1.4;
-  font-size: 14px;
+  line-height: 1.6;
+  font-size: 15px;
 }
 .user-message .bubble {
   background: #eaeaff;
   color: #202124;
-  font-size: 15px;
-  line-height: 1.6;
   padding: 8px 15px;
 }
-.bot-message .bubble {
+.agent-message .bubble {
   background: #ffffff;
   color: #202124;
-  font-size: 15px;
-  line-height: 1.6;
-  padding: 0px 18px;
+  padding: 8px 18px 0px 18px;
 }
+/* instead of .bubble, target .message-bubble too */
+.message-bubble,
+.bubble {
+  max-width: 80%;
+  border-radius: 12px;
+  line-height: 1.6;
+  font-size: 15px;
+}
+
+.user-message .message-bubble {
+  background: #eaeaff;
+  color: #202124;
+  padding: 8px 15px;
+}
+
+.agent-message .message-bubble {
+  background: #fff;
+  color: #202124;
+  padding: 3px 15px;
+}
+
 
 /* Chat-input */
 .chat-input {
@@ -306,11 +336,13 @@ body, html {
   height: 50px;
   display: flex;
   align-items: center;
+  z-index: 1000;
+  color: #202124;
+  font-size: 16px;
 }
 .nav-user .username {
   margin-left: 8px;
-  font-size: 16px;
-  color: #202124;
+  color: inherit;
 }
 .edit-btn {
   display: none;
@@ -326,9 +358,6 @@ body, html {
 }
 body.sidebar-collapsed .nav-user {
   display: none;
-}
-body.sidebar-collapsed .edit-btn {
-  display: flex;
 }
 body:not(.sidebar-collapsed) .edit-btn {
   display: none;
@@ -532,4 +561,40 @@ body:not(.sidebar-collapsed) .edit-btn {
 .connected-account-status svg:last-child { /* Style the grey checkmark */
    margin-left: 4px;
 }
+
+/* Style for the delete button itself */
+.delete-recent-btn {
+  display: none; /* Hide button by default */
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 5px;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 5px;
+  transition: filter 0.2s ease; /* Add a transition for a smoother effect */
+}
+
+.delete-recent-btn img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+/* Add a filter to the image when the button is hovered */
+.delete-recent-btn:hover img {
+  filter: brightness(1.2);
+}
+
+/* Rule to display the delete button when hovering over a list item OR when the list item is active */
+.sidebar li:hover .delete-recent-btn,
+.sidebar li.active .delete-recent-btn {
+    display: flex; /* Show button on hover or when active */
+}
+
+
 

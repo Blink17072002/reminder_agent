@@ -23,7 +23,7 @@ def signUpUser(request):
         if form.is_valid():
             user = form.save()
             # messages.success(request, 'Account created successfully! You can now log in.')
-            login(request, user)
+            login(request, user, backend='django.contrib.auth.backends.ModelBackend')
             return redirect("home")
         else:
             # Turn all field errors into one clean string

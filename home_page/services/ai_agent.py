@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from typing import TYPE_CHECKING, Any
 import os
+import traceback
 
 if TYPE_CHECKING:
     User = get_user_model()
@@ -23,46 +24,83 @@ class AIAgent:
         self.openai_client = OpenAI(api_key=openai_api_key) if openai_api_key else None
         self.claude_client = Anthropic(api_key=claude_api_key) if claude_api_key else None
 
+        # Define models here or load from settings if preferred
+        self.general_chat_model = "gpt-4o-mini"
+        self.calendar_intent_model = "claude-3-5-sonnet-20240620" # Or another suitable Claude model
+        self.calendar_param_model = "claude-3-5-sonnet-20240620" # Or another suitable Claude model
+        self.title_generation_model = "gpt-4o-mini"
+
     def _get_openai_response(self, messages, json_mode: bool = False, temperature: float = 0.7, max_tokens: int   = 500):
         """Helper to call OpenAI API."""
         if not self.openai_client:
-            raise ValueError("OpenAI client not initialized (API key missing?)")
+            print("Warning: OpenAI client not initialized. Cannot get response.")
+            return None # Return None or raise error as appropriate
 
         try:
             response_format = {"type": "json_object"} if json_mode else {"type": "text"}
+            # Use instance model or passed model
+            model_to_use = self.general_chat_model
+            temp_to_use = temperature
+            tokens_to_use = max_tokens
+
+            # Special case for title generation which might use different params
+            if messages and messages[0].get('content', '').startswith("Based on this first message exchange"):
+                 model_to_use = self.title_generation_model
+                 temp_to_use = 0.1 # Lower temperature for more deterministic title
+                 tokens_to_use = 20 # Max tokens for title
+
             resp = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",  # Using GPT-4o-mini for cost-effective performance
+                model=model_to_use,
                 messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
+                temperature=temp_to_use,
+                max_tokens=tokens_to_use,
                 response_format=response_format,
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
             print(f"Error calling OpenAI API: {e}")
-            import traceback
             traceback.print_exc()
-            raise e
+            # Depending on criticality, re-raise or return None
+            raise e # Re-raise to be caught by calling handle method
 
     def _get_claude_response(self, messages):
         """Helper to call Claude API."""
         if not self.claude_client:
-            raise ValueError("Claude client not initialized (API key missing?)")
+            print("Warning: Claude client not initialized. Cannot get response.")
+            return None # Return None or raise error as appropriate
         try:
+            # Use instance model or passed model
+            model_to_use = self.calendar_intent_model # Default model
+            temp_to_use = 0.7 # Default temperature
+            tokens_to_use = 150 # Default max_tokens
+
+            # Adjust params based on prompt (simple heuristic)
+            prompt_content = messages[-1].get('content', '') if messages else ''
+            if "Classify the user's intent" in prompt_content:
+                 model_to_use = self.calendar_intent_model
+                 temp_to_use = 0 # Deterministic intent
+                 tokens_to_use = 20 # Short response expected
+            elif "Extract the calendar action and parameters" in prompt_content:
+                 model_to_use = self.calendar_param_model
+                 temp_to_use = 0.3 # A bit more flexible than intent, but still structured
+                 tokens_to_use = 300 # More tokens for JSON output
+
+
             resp = self.claude_client.messages.create(
-                model="claude-3-sonnet-20240229",
+                model=model_to_use,
                 messages=messages,
-                temperature=0.7,
-                max_tokens=150
+                temperature=temp_to_use,
+                max_tokens=tokens_to_use
             )
             return resp.content[0].text.strip()
         except Exception as e:
             print(f"Error calling Claude API: {e}")
-            import traceback
             traceback.print_exc()
-            raise e
+            # Depending on criticality, re-raise or return None
+            raise e # Re-raise to be caught by calling handle method
 
     def get_google_account_email(self):
+        """Retrieves the connected Google account email."""
         try:
             social_account = SocialToken.objects.select_related('account').get(
                 account__user=self.user,
@@ -73,278 +111,183 @@ class AIAgent:
             return None
 
     def is_google_connected(self) -> bool:
+        """Checks if the user has a connected Google account."""
         try:
+            # Check if a SocialToken for Google exists for the user
             return SocialToken.objects.filter(account__user=self.user, account__provider='google').exists()
         except Exception:
+            # Handle potential database errors gracefully
             return False
         
     def determine_intent(self, text: str) -> str:
-        """Uses Claude to classify the user's intent."""
+        """Uses Claude to classify the user's intent (calendar vs general_chat)."""
         if not self.claude_client:
+            print("Claude client not initialized, defaulting intent to general_chat.")
             return 'general_chat'
 
         intent_prompt = (
             "Classify the user's intent based on the following message. "
             "Choose one of the following categories: 'calendar', 'general_chat'. "
             "If the intent is unclear or doesn't fit 'calendar', default to 'general_chat'. "
-            "Reply ONLY with the category name."
+            "Reply ONLY with the category name, e.g., 'calendar' or 'general_chat'."
         )
-        messages = [{"role": "user", "content": f"{intent_prompt}\n\nUser message: {text}"}]
+        messages = [
+             # Optional: include some conversation history for better context
+            # {"role": "user" if m.sender == "user" else "assistant", "content": m.text}
+            # for m in conversation.messages.order_by('-timestamp')[:5][::-1] if conversation and m.text and m.text.strip()
+            # Always include the current message
+            {"role": "user", "content": f"{intent_prompt}\n\nUser message: {text}"}
+        ]
         
         try:
-            intent = self._get_claude_response(messages)
+            # Use the specific model and low temperature for intent
+            intent = self._get_claude_response(messages) # Model/temp handled in helper based on prompt
             intent = intent.strip().lower()
-            return intent if intent in ['calendar', 'general_chat'] else 'general_chat'
+            if intent in ['calendar', 'general_chat']:
+                print(f"Intent detected: {intent}")
+                return intent
+            else:
+                print(f"AI returned unknown intent '{intent}', defaulting to general_chat.")
+                return 'general_chat'
         except Exception as e:
             print(f"Error determining intent: {e}, defaulting to general_chat.")
+            # Log the full traceback if needed, but return a default to keep the app running
+            # traceback.print_exc()
             return 'general_chat'
 
     def extract_calendar_parameters(self, text: str) -> dict:
         """Uses Claude to extract parameters for calendar actions."""
         if not self.claude_client:
-            return {"action": "unknown", "params": {}, "error": "AI client not initialized."}
+            print("Claude client not initialized. Cannot extract calendar parameters.")
+            return {"action": "unknown", "params": {}, "details": "AI client not initialized."}
 
         parameter_prompt = (
-            "Extract the calendar action and parameters from the following message. "
+            "Extract the primary calendar action, parameters, and a brief human-readable summary from the user's message. "
             "Identify the action (e.g., 'create_event', 'list_events', 'delete_event', 'find_free_slots', 'list_calendars'). "
             "Extract relevant parameters such as event 'summary', 'start' time/date, 'end' time/date, 'attendees' (list of emails). "
-            "Return a JSON object like: {'action': 'action_name', 'params': {... parameters ...}, 'details': 'human-readable summary'}. "
-            "If date/time/attendees are ambiguous or missing for a create action, include 'needs_clarification': ['field1', 'field2'] in params."
+            "If date/time/attendees are ambiguous or missing for a 'create_event', include 'needs_clarification': ['field1', 'field2'] in the params. "
+            "Return a JSON object ONLY. Format: {'action': 'action_name', 'params': {... parameters ...}, 'details': 'human-readable summary of intended action'}. "
+            "Example for 'create_event': {'action': 'create_event', 'params': {'summary': 'Meeting with John', 'start': 'tomorrow 2pm', 'end': 'tomorrow 3pm', 'attendees': ['john@example.com']}, 'details': 'create a meeting with John tomorrow from 2 to 3 pm'}."
+             "Example for 'list_events': {'action': 'list_events', 'params': {'time_min': 'today 9am'}, 'details': 'list my events from 9 am today'}."
+             "Example for needing clarification: {'action': 'create_event', 'params': {'summary': 'Lunch', 'needs_clarification': ['time', 'date']}, 'details': 'schedule a lunch meeting'}."
+             "If the action or parameters are unclear or not calendar-related, use action: 'unknown'."
         )
         
+        messages = [
+            # Optional: include some conversation history for context
+            # {"role": "user" if m.sender == "user" else "assistant", "content": m.text}
+            # for m in conversation.messages.order_by('-timestamp')[:5][::-1] if conversation and m.text and m.text.strip()
+            # Always include the current message
+            {"role": "user", "content": f"{parameter_prompt}\n\nUser message: {text}"}
+        ]
+
         try:
-            json_str = self._get_claude_response([
-                {"role": "user", "content": f"{parameter_prompt}\n\nUser message: {text}"}
-            ])
-            return json.loads(json_str)
+            # Use the specific model for parameter extraction
+            json_str = self._get_claude_response(messages) # Model/temp handled in helper based on prompt
+            print(f"Claude parameter extraction raw response: {json_str}")
+            # Attempt to parse the JSON string
+            try:
+                 extracted_data = json.loads(json_str)
+                 # Basic validation of the JSON structure
+                 if not isinstance(extracted_data, dict) or 'action' not in extracted_data or 'params' not in extracted_data or 'details' not in extracted_data:
+                      print(f"AI returned invalid JSON structure: {extracted_data}")
+                      return {"action": "unknown", "params": {}, "details": "Failed to extract details."} # Default to unknown if format is wrong
+                 return extracted_data
+            except json.JSONDecodeError:
+                 print(f"AI returned non-JSON response for parameter extraction: {json_str}")
+                 # If AI doesn't return valid JSON, treat as unknown intent
+                 return {"action": "unknown", "params": {}, "details": "Failed to extract details."}
+
         except Exception as e:
             print(f"Error extracting calendar parameters: {e}")
-            return {"action": "unknown", "params": {}, "error": f"Failed to extract details: {e}"}
-
-    def process_calendar_intent(self, message_text: str):
-        """Handles messages with calendar intent."""
-        google_account_email = self.get_google_account_email()
-        is_connected = self.is_google_connected()
-
-        # Even if connected, check if API clients are initialized
-        if not self.openai_client:
-             return {
-                'type': 'text',
-                'response': "My AI capabilities are not configured. Please check the server settings."
-            }
-
-        if not is_connected:
-            # Return response indicating connection is needed
-            return {
-                'type': 'needs_connection',
-                'content': {
-                    'email': google_account_email # Pass email if we could retrieve it before hitting token error
-                    # You might pass the connect URL here from the backend view's context if needed,
-                    # but for now JS reads it from a data attribute on the body.
-                }
-            }
-        else:
-            # User is connected - extract parameters using AI
-            extracted_data = self.extract_calendar_parameters(message_text)
-            action = extracted_data.get('action')
-            params = extracted_data.get('params', {})
-            details = extracted_data.get('details', '') # Human-readable summary from AI
-
-            if extracted_data.get('error'):
-                 return {
-                     'type': 'text',
-                     'response': extracted_data['error'] # Return error from extraction
-                 }
-
-            # Check if AI indicated needing clarification
-            if params.get('needs_clarification'):
-                 missing_fields = ", ".join(params['needs_clarification'])
-                 clarification_text = f"I need more information to {details}. Could you please provide the {missing_fields}?"
-                 return {
-                     'type': 'text',
-                     'response': clarification_text
-                 }
-
-
-            # --- START: Call GoogleCalendarService methods based on AI action ---
-            try:
-                svc = GoogleCalendarService(self.user) # Initialize service now that we know user is connected
-
-                if action == "list_events":
-                    print(f"Calling list_events with params: {params}")
-                    # You need to handle date/time parsing from AI output here or refine extraction prompt
-                    # Example: handle 'today', 'tomorrow', 'next week', etc.
-                    # For now, pass params directly, assuming AI extracted valid API format (unlikely)
-                    # A robust implementation would parse params like 'start_time_str' into RFC3339 format.
-                    # Let's simulate success with hardcoded data for now.
-                    # events = svc.list_events(**params) # Pass extracted params
-                    simulated_events = [
-                        {"summary": "Sample Event 1", "start": {"dateTime": "...", "timeZone": "..."}, "end": {"dateTime": "...", "timeZone": "..."}},
-                        {"summary": "Sample Event 2", "start": {"dateTime": "...", "timeZone": "..."}, "end": {"dateTime": "...", "timeZone": "..."}},
-                    ]
-                    response_text = "Here are your events:\n" + json.dumps(simulated_events, indent=2) # Format nicely
-                    return {
-                         'type': 'text',
-                         'response': response_text
-                     }
-
-
-                elif action == "create_event":
-                    print(f"Calling create_event with params: {params}")
-                    # Requires careful parsing of start, end, attendees from AI's params
-                    # E.g., convert "tomorrow at 3pm" to ISO format "2024-05-22T15:00:00Z"
-                    # This is where the complexity lies. You might need date/time parsing libraries.
-                    # For now, simulate success.
-                    simulated_event_title = params.get('summary', 'New Event')
-                    # event_body = { ... construct from parsed params ... }
-                    # created_event = svc.create_event('primary', event_body) # Example call
-
-
-                    # Simulate success response using the structure from your HTML
-                    return {
-                        'type': 'event_success',
-                        'content': {
-                            'event_title': simulated_event_title, # Use AI-extracted title
-                            'connected_email': google_account_email # Pass the connected email
-                        }
-                    }
-
-                elif action == "list_calendars":
-                     print("Calling list_calendars.")
-                     calendars = svc.list_calendars()
-                     response_text = "Here are your calendars:\n" + json.dumps(calendars, indent=2)
-                     return {
-                         'type': 'text',
-                         'response': response_text
-                     }
-
-                # Add elif for delete_event, update_event, find_free_slots, etc.
-                # These will also require parameter parsing and calling the corresponding svc methods.
-
-
-                elif action == "unknown":
-                    # AI couldn't determine a specific calendar action
-                     return {
-                        'type': 'text',
-                         'response': f"I'm connected to your Google Calendar, but I'm not sure how to help with that request. Could you please rephrase?"
-                     }
-
-                else:
-                    # AI returned a known action name but it's not implemented in this elif block yet
-                     return {
-                        'type': 'text',
-                         'response': f"I understood you want to {details}, but that specific calendar action ({action}) is not yet implemented."
-                     }
-
-
-            except SocialToken.DoesNotExist:
-                # This *shouldn't* be hit if is_connected check works, but good safety
-                return {"error": "Please connect your Google account to enable calendar features."}
-            except Exception as e:
-                # Catch any errors during calendar service calls or parameter parsing/conversion
-                print(f"Error during calendar service call or processing: {e}")
-                import traceback
-                traceback.print_exc()
-                return {
-                    'type': 'text',
-                    'response': f"Sorry, I encountered an error while trying to process your calendar request: {e}"
-                }
-
+            traceback.print_exc()
+            # If API call fails, treat as unknown intent
+            return {"action": "unknown", "params": {}, "details": f"Failed to extract details: {e}"}
 
     def handle(self, text: str, conversation=None, is_title_generation=False) -> dict:
-        """Processes the user's message and returns a structured response."""
+        """
+        Processes the user's message, determines intent, and returns a structured response
+        indicating the next step (general chat, needs connection, or calendar action data).
+        Does NOT perform calendar actions directly.
+        """
+        # Handle title generation separately if the flag is set
         if is_title_generation:
             if not self.openai_client:
                 return {'type': 'text', 'response': "AI client not initialized for title generation."}
             try:
-                messages = [{"role": "user", "content": text}]
-                title = self._get_openai_response(messages, temperature=0.1, max_tokens=20)
+                messages = [{"role": "user", "content": text}] # Text is the title prompt here
+                # Use specific parameters for title generation handled in _get_openai_response
+                title = self._get_openai_response(messages)
                 return {'type': 'text', 'response': title}
             except Exception as e:
                 print(f"Error generating title: {e}")
+                # Return a fallback or error message for title generation
                 return {'type': 'text', 'response': "Error generating title."}
 
+        # --- Main message handling logic ---
         if not self.openai_client and not self.claude_client:
+            print("Neither OpenAI nor Claude client is initialized.")
             return {
                 'type': 'text',
                 'response': "AI services are not configured. Please check the server settings."
             }
 
+        # 1. Determine Intent (Calendar or General Chat)
         intent = self.determine_intent(text)
-        print(f"Processing message with primary intent: {intent}")
-        
+        print(f"Message intent: {intent}")
+
+        # 2. Handle based on Intent
         if intent == 'calendar':
+            # Check Google Connection Status FIRST for calendar intents
             if not self.is_google_connected():
+                print("Calendar intent detected, but Google not connected. Requesting connection.")
                 return {
                     'type': 'needs_connection',
-                    'content': {'email': self.get_google_account_email()}
+                    'content': {
+                        'email': self.get_google_account_email() # Pass email if available
+                    }
                 }
+            else:
+                # If connected, proceed to extract calendar parameters
+                print("Google connected. Extracting calendar parameters...")
+                extracted_data = self.extract_calendar_parameters(text)
+                action = extracted_data.get('action')
+                params = extracted_data.get('params', {})
+                details = extracted_data.get('details', '')
+                error = extracted_data.get('error')
 
-            extracted_data = self.extract_calendar_parameters(text)
-            action = extracted_data.get('action')
-            params = extracted_data.get('params', {})
-            details = extracted_data.get('details', '')
+                if error:
+                     print(f"Parameter extraction failed: {error}")
+                     return {
+                         'type': 'text',
+                         'response': error # Return the error from extraction
+                     }
 
-            if params.get('needs_clarification'):
-                missing_fields = ", ".join(params['needs_clarification'])
+                # Check if AI indicated needing clarification on parameters
+                if params.get('needs_clarification'):
+                     missing_fields = ", ".join(params['needs_clarification'])
+                     clarification_text = f"I need more information to {details}. Could you please provide the {missing_fields}?"
+                     print(f"Extraction needs clarification: {clarification_text}")
+                     return {
+                         'type': 'text',
+                         'response': clarification_text
+                     }
+                
+                # If parameters are extracted and no clarification is needed,
+                # return a structured response indicating the *intended* calendar action
+                # The view (chat_process) will then perform the action.
+                print(f"Parameters extracted successfully. Signalling view to perform action: {action} with params: {params}")
                 return {
-                    'type': 'text',
-                    'response': f"I need more information to {details}. Could you please provide the {missing_fields}?"
+                    'type': 'calendar_action_request', # New type to signal the view
+                    'content': {
+                        'action': action,
+                        'params': params,
+                        'details': details # Keep the human-readable details
+                    }
                 }
 
-            try:
-                svc = GoogleCalendarService(self.user)
-                
-                if action == "create_event":
-                    # Use Claude to format the event details
-                    event_prompt = (
-                        "Format the following event details into a proper calendar event structure. "
-                        "Include summary, start, end, and attendees if provided. "
-                        "Use ISO 8601 format for dates. "
-                        f"Details: {json.dumps(params)}"
-                    )
-                    event_details = self._get_claude_response([
-                        {"role": "user", "content": event_prompt}
-                    ])
-                    event_data = json.loads(event_details)
-                    
-                    created_event = svc.create_event('primary', event_data)
-                    return {
-                        'type': 'event_success',
-                        'content': {
-                            'event_title': event_data.get('summary', 'New Event'),
-                            'connected_email': self.get_google_account_email()
-                        }
-                    }
-                
-                elif action == "list_events":
-                    events = svc.list_events(**params)
-                    return {
-                        'type': 'text',
-                        'response': f"Here are your events:\n{json.dumps(events, indent=2)}"
-                    }
-                
-                elif action == "list_calendars":
-                    calendars = svc.list_calendars()
-                    return {
-                        'type': 'text',
-                        'response': f"Here are your calendars:\n{json.dumps(calendars, indent=2)}"
-                    }
-                
-                else:
-                    return {
-                        'type': 'text',
-                        'response': f"I understood you want to {details}, but that specific calendar action ({action}) is not yet implemented."
-                    }
-
-            except Exception as e:
-                print(f"Error in calendar handling: {e}")
-                return {
-                    'type': 'text',
-                    'response': f"Sorry, I encountered an error while processing your calendar request: {e}"
-                }
-        
-        else:  # general_chat
+        else: # intent == 'general_chat'
+            print("General chat intent detected. Using OpenAI.")
             try:
                 system = (
                     "You are a friendly and knowledgeable calendar assistant. "
@@ -356,7 +299,7 @@ class AIAgent:
                     "  1. Use an ordered list (1., 2., 3., …).\n"
                     "  2. On each numbered line, put the **Capability name:** and its short description on the **same line**.\n"
                     "     Then end that line with two spaces (to force a Markdown line-break).\n"
-                    "  3. On the very next line (indented by four spaces), write **Example:** and its text.\n"
+                    "  3. On the very next line (indented by four spaces), write Example: and its text.\n"
                     "  4. Only use bullets (• or ●) if you really need a second-level list under an example.\n"
                     "After all your explanation, examples and points, leave a line before giving your closing statement or remark.\n"
                     "\n"
@@ -364,26 +307,38 @@ class AIAgent:
                 
                 messages_history = []
                 if conversation:
-                    history_messages = conversation.messages.order_by('-timestamp')[:10]
-                    history_messages = list(history_messages)[::-1]
+                    # Fetch recent messages (e.g., last 10) for context, excluding empty ones
+                    history_messages = conversation.messages.filter(text__isnull=False, text__gt='').order_by('-timestamp')[:10]
+                    history_messages = list(history_messages)[::-1] # Reverse to get chronological order
                     messages_history = [
                         {"role": "user" if m.sender == "user" else "assistant", "content": m.text}
-                        for m in history_messages if m.text and m.text.strip()
+                        for m in history_messages if m.text and m.text.strip() # Double check text is not empty
                     ]
+                    print(f"Including {len(messages_history)} history messages in general chat prompt.")
 
+                # Add the current user message
                 messages_history.append({"role": "user", "content": text})
                 
+                # Get response from OpenAI
                 content = self._get_openai_response([
                     {"role": "system", "content": system},
                     *messages_history
                 ])
-                
+
+                if content is None:
+                     return {
+                        'type': 'text',
+                        'response': "Sorry, I couldn't get a response from the AI for general chat."
+                     }
+
+                print("Generated general chat response.")
                 return {
                     'type': 'text',
                     'response': content
                 }
             except Exception as e:
                 print(f"Error in general chat handling: {e}")
+                traceback.print_exc()
                 return {
                     'type': 'text',
                     'response': "Sorry, I'm having trouble processing that request right now."

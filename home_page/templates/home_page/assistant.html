@@ -7,7 +7,8 @@
   <title>Meeting Scheduler</title>
   <link rel="stylesheet" href="{% static 'home_page/css/home.css' %}" />
 </head>
-<body {% if is_new_conversation_page %}data-is-new-conversation="true"{% endif %}>
+<body
+  {% if is_new_conversation_page %}data-is-new-conversation="true" data-welcome-message-text="{{ welcome_message_text }}"{% endif %}>
   <nav class="navbar">
     <button class="sidebar-toggle-btn nav-btn">☰</button>
     <!-- edit icon appears when sidebar is closed -->
@@ -15,8 +16,20 @@
       <img src="{% static 'home_page/images/edit.png' %}" alt="Edit"/>
     </a>
     <div class="nav-user">
-      <div class="avatar user-avatar">{{ request.user.first_name|slice:":1"|upper }}</div>
-      <span class="username">{{ request.user.get_full_name }}</span>
+      <div class="avatar user-avatar">
+        {% if request.user.first_name %}
+          {{ request.user.first_name|slice:":1"|upper }}
+        {% else %}
+          {{ request.user.username|slice:":1"|upper }}
+        {% endif %}
+      </div>
+      <span class="username">
+        {% if request.user.get_full_name %}
+          {{ request.user.get_full_name }}
+        {% else %}
+          {{ request.user.username }}
+        {% endif %}
+      </span>
     </div>
     <div class="nav-title">Meeting Scheduler</div>
     <button class="logout-btn">Logout</button>
@@ -25,14 +38,24 @@
   <div class="app-container">
     <div class="sidebar-wrapper">
       <aside class="sidebar">
-        <a href="{% url 'home_page:new_conversation' %}" class="new-task-btn" style="text-decoration:none;">+ New Task</a>
+        <a class="new-task-btn" role="button" style="text-decoration:none;">+ New Task</a>
         <div class="recents">
           <h3>Recents</h3>
           <ul id="recents-list">
             {% for convo in conversations %}
-            <li class="{% if convo == current_convo %}active{% endif %}">
-              <a href="{% url 'home_page:assistant' convo.id %}">{{ convo.title }}</a>
-            </li>
+              {% if convo.id == "placeholder" %}
+                <li data-placeholder="true" class="{% if not current_convo %}active{% endif %}">
+                  <a href="#" class="recent-link">New Chat</a>
+                  <button class="delete-recent-btn" style="display:none"></button>
+                </li>
+              {% else %}
+                <li data-convo-id="{{ convo.id }}" class="{% if is_first_message %}active animate__fadeIn just-created{% else %}{% if convo.id == active_convo_id %}active{% endif %}{% endif %}">
+                  <a href="{% url 'home_page:assistant' convo.id %}" class="recent-link">{{ convo.title }}</a>
+                  <button class="delete-recent-btn">
+                    <img src="{% static 'home_page/images/delete.png' %}" alt="Delete">
+                  </button>
+                </li>
+              {% endif %}
             {% empty %}
               </ul>
               <p class="no-convos-msg">No conversations yet.</p>
@@ -43,15 +66,19 @@
     </div>
     <!-- Chat -->
     <section class="chat-panel">
-      <div id="chat-log" class="chat-messages">
+      <div id="chat-box" class="chat-messages">
         {% for msg in messages %}
           {% if msg.text.strip %}
-            <div class="message {% if msg.sender == "user" %}user-message{% else %}bot-message{% endif %}">
-              <div class="avatar {% if msg.sender == "user" %}user-avatar{% else %}bot-avatar{% endif %}">
+            <div class="message {% if msg.sender == "user" %}user-message{% else %}agent-message{% endif %}">
+              <div class="avatar {% if msg.sender == "user" %}user-avatar{% else %}agent-avatar{% endif %}">
                 {% if msg.sender == "user" %}
-                  {{ request.user.first_name|slice:":1"|upper }}
+                  {% if request.user.first_name %}
+                    {{ request.user.first_name|slice:":1"|upper }}
+                  {% else %}
+                    {{ request.user.username|slice:":1"|upper }}
+                  {% endif %}
                 {% else %}
-                  <!-- bot icon SVG here -->
+                  <!-- agent icon SVG here -->
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                     <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14
                     c0 1.1.9 2 2 2h14
@@ -60,31 +87,39 @@
                   </svg>
                 {% endif %}
               </div>
-              <div class="bubble"
+              <div class="message-content">
+                 <div class="message-bubble"
                    {% if msg.sender == "agent" %}data-raw="{{ msg.text|escape }}"{% endif %}
                    {% if is_new_conversation_page and forloop.first and msg.sender == "agent" %}data-welcome-message="true"{% endif %}>
-                {% if is_new_conversation_page and forloop.first and msg.sender == "agent" %}
-                   {{ msg.text|escape }}
-                {% else %}
-                   {{ msg.text|linebreaksbr }}
-                {% endif %}
-              </div> 
+                     <div class="message-text">
+                         {% if is_new_conversation_page and forloop.first and msg.sender == "agent" %}
+                            {{ msg.text|escape }}
+                         {% else %}
+                            {{ msg.text|linebreaksbr }}
+                         {% endif %}
+                     </div>
+              </div>
+              </div>
             </div>
           {% endif %}
         {% endfor %}
       </div>
-      <form id="chat-form" action="{% if current_convo %}{% url 'home_page:assistant' current_convo.id %}{% else %}{% url 'home_page:assistant' %}{% endif %}">
+      <form id="chat-form" method="post" action="{% url 'home_page:chat_process' %}"
+            data-user-avatar="{{ request.user.first_name|slice:":1"|upper }}"
+            data-agent-avatar='<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM19 20H5V8h14v12z" fill="#5F6368"/></svg>'
+            {% if current_convo %}data-initial-convo-id="{{ current_convo.id }}"{% endif %}>
         {% csrf_token %}
         <div class="chat-input">
           <div class="chat-input-inner">
             <textarea id="chat-input" name="message" class="chat-textarea" placeholder="Enter message" rows="1"></textarea>
-            <button type="submit" class="send-btn">➤</button>
+            <button type="button" id="send-button" class="send-btn">➤</button>
           </div>
         </div>
       </form>
     </section>
   </div>
 
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="{% static 'home_page/js/home.js' %}"></script>
 </body>
