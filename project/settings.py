@@ -70,12 +70,13 @@ SOCIALACCOUNT_PROVIDERS = {
         'SCOPE': [
             'profile', 
             'email',
-            # "https://www.googleapis.com/auth/calendar.events",
-            # "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/calendar.events",
+            "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/gmail.send",
             ],
         'AUTH_PARAMS': {
             'access_type': 'offline',
-            'prompt': 'select_account'
+            'prompt': 'consent select_account'
         },
     }
 }
@@ -88,6 +89,9 @@ SOCIALACCOUNT_AUTO_SIGNUP = True
 
 # Tell allauth to use the app's adapter, which always auto‐approves social signups
 SOCIALACCOUNT_ADAPTER = 'authentication.adapter.AutoSocialAccountAdapter'
+
+# Persist access/refresh tokens so API clients (Google Calendar/Gmail) can use them.
+SOCIALACCOUNT_STORE_TOKENS = True
 
 
 MIDDLEWARE = [

@@ -1,1 +1,4 @@
 <form id="chat-form" action="{% if current_convo %}{% url 'home_page:assistant' current_convo.id %}{% else %}{% url 'home_page:assistant' %}{% endif %}">
+
+use this to update requirements.txt (ignores virtual environment and migrations): 
+    pipreqs.exe . --force --encoding utf-8 --ignore "virtual,**/__pycache__,authentication/migrations,home_page/migrations"

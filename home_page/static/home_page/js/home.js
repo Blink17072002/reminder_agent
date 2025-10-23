@@ -8,38 +8,6 @@ marked.setOptions({
     mangle: false
 });
 
-// Initialize conversation ID from form data attribute
-document.addEventListener('DOMContentLoaded', function() {
-    const chatForm = document.getElementById("chat-form");
-    if (chatForm) {
-        // Get the initial conversation ID from the form's data attribute
-        const initialConvoId = chatForm.dataset.initialConvoId;
-        if (initialConvoId) {
-            // Set the conversation ID on the message input
-            const messageInput = document.getElementById("chat-input");
-            if (messageInput) {
-                messageInput.dataset.convoId = initialConvoId;
-            }
-        }
-    }
-
-    // Add form submit handler
-    if (chatForm) {
-        chatForm.addEventListener('submit', async function(e) {
-            e.preventDefault();
-            const messageInput = document.getElementById("chat-input");
-            const messageText = messageInput.value.trim();
-            
-            if (messageText) {
-                // Get conversation ID from the form's data attribute
-                const conversationId = chatForm.dataset.initialConvoId;
-                console.log("Form submit - Using conversation ID:", conversationId);
-                sendUserMessage(messageText, conversationId, messageInput);
-            }
-        });
-    }
-});
-
 // Get the Google Calendar icon URL from a data attribute on the body
 // Make sure this attribute is set in your base template or view context
 // You'll need to add something like: <body data-google-calendar-icon-url="{% static 'path/to/your/google_calendar_icon.svg' %}"> in your base template or assistant.html
@@ -90,7 +58,7 @@ function autoResize() {
 
 // --- Scroll to Bottom ---
 function scrollChatToBottom() {
-    const chatMessagesContainer = document.getElementById("chat-log"); // Use getElementById
+    const chatMessagesContainer = document.getElementById("chat-box"); // Use getElementById
     if (chatMessagesContainer) {
         // Use smooth scrolling to the last message
         const last = chatMessagesContainer.querySelector('.message:last-child');
@@ -107,7 +75,7 @@ function scrollChatToBottom() {
 
 // Function to remove the welcome message (static or animating) - Kept as it's used when sending the first message
 function removeWelcomeMessage() {
-    const chatMessagesContainer = document.getElementById("chat-log");
+    const chatMessagesContainer = document.getElementById("chat-box");
      if (!chatMessagesContainer) return;
     // Select the bubble with the data attribute and find its parent message
     const welcomeMessageBubble = chatMessagesContainer.querySelector('.message .bubble[data-welcome-message="true"]');
@@ -126,7 +94,7 @@ function removeWelcomeMessage() {
 // Function to type text character by character into a bubble element
 // Includes callback for actions after typing finishes (like scrolling or title update)
 // Modified to correctly handle rendering final markdown content
-function typeText(element, rawText, speed = 5, callback = null) {
+function typeText(element, rawText, speed = 3, callback = null) {
     let i = 0;
     const textStr = String(rawText); // Use rawText provided, ensure it's a string
 
@@ -193,7 +161,7 @@ function escapeHtml(unsafe) {
 // Handles different response types based on data from the backend
 // Modified to correctly transition from typing indicator to final content
 function appendMessage(sender, responseData, isTyping = false, convoId = null, isFirstActualMessage = false, placeholderElement = null) {
-    const chatMessagesContainer = document.getElementById("chat-log"); // Use getElementById
+    const chatMessagesContainer = document.getElementById("chat-box"); // Use getElementById
     if (!chatMessagesContainer) {
         console.error("Chat messages container not found!");
         return null; // Return null if container not found
@@ -242,42 +210,33 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
          messageDiv.dataset.isFirstActualMessage = 'true';
     }
 
-     // Create avatar div only for standard text messages and user messages
-    // Structured messages don't have avatars directly next to them
-    // Check if avatarDiv exists *before* creating it again if using a placeholder
-    if (!placeholderElement || messageDiv.querySelector('.avatar')) { // If not a placeholder, or if placeholder message already has avatar
-        if (sender === 'user' || (sender === 'agent' && responseType === 'text')) {
-             // Find existing avatar if using placeholder, otherwise create new
-             avatarDiv = messageDiv.querySelector('.avatar');
-             if (!avatarDiv) {
-                avatarDiv = document.createElement("div");
-                avatarDiv.classList.add("avatar", sender + "-avatar");
-                // Prepend avatar to messageDiv if creating new
-                 messageDiv.prepend(avatarDiv);
-             }
+     // Give an avatar to user messages AND to all agent bubbles (including structured ones)
+    if (!placeholderElement || messageDiv.querySelector('.avatar')) {
+      if (
+        sender === 'user' ||
+        (sender === 'agent' && 
+          ['text','needs_connection','event_success','connected_status'].includes(responseType)
+        )
+      ) {
+        avatarDiv = messageDiv.querySelector('.avatar') || document.createElement("div");
+        avatarDiv.classList.add('avatar', sender + '-avatar');
+        messageDiv.prepend(avatarDiv);
 
+        if (sender === 'user') {
+            const userAvatarMain = document.querySelector('.nav-user .avatar');
+            const userInitial = userAvatarMain ? userAvatarMain.textContent.trim() : 'U';
+            avatarDiv.textContent = userInitial;
 
-             if (sender === 'user') {
-                const userAvatarMain = document.querySelector('.nav-user .avatar');
-                const userInitial = userAvatarMain ? userAvatarMain.textContent.trim() : 'U';
-                 avatarDiv.textContent = userInitial;
-
-            } else { // agent (for text bubbles)
-                 avatarDiv.innerHTML = `
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                      <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14
-                               c0 1.1.9 2 2 2h14
-                               c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM19 20H5V8h14v12z"
-                            fill="#5F6368"/>
-                    </svg>
-                 `;
-            }
-        } else {
-             // Remove avatar if it exists and shouldn't be there for this message type
-             const existingAvatar = messageDiv.querySelector('.avatar');
-             if(existingAvatar) existingAvatar.remove();
-             avatarDiv = null; // Ensure avatarDiv variable is null
+        } else { // agent avatar (calendar icon SVG)
+            avatarDiv.innerHTML = `
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14
+                         c0 1.1.9 2 2 2h14
+                         c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM19 20H5V8h14v12z"
+                      fill="#5F6368"/>
+              </svg>`;
         }
+      }
     }
 
 
@@ -309,14 +268,46 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
 
             // Save raw text for potential re-rendering or copy
             messageDiv.dataset.raw = textContent;
-            // Render markdown directly into the bubble
-            contentContainer.innerHTML = marked.parse(textContent);
+
+            if (placeholderElement) {
+                // We were showing a typing indicator: animate the reply in
+                typeText(contentContainer, textContent, 3, scrollChatToBottom);
+            } else {
+                // Instant render (e.g., messages loaded from DB on page-load)
+                contentContainer.innerHTML = marked.parse(textContent);
+            }
 
         } else if (responseType === 'event_success') {
             // Remove bubble class for structured content
             contentContainer.classList.remove("bubble");
             const eventTitle = responseContent?.event_title || 'Your Event';
             const connectedEmail = responseContent?.connected_email || '';
+            const eventLink = responseContent?.event_link || '';
+            const createdStart = responseContent?.created_start || '';
+            const createdEnd = responseContent?.created_end || '';
+
+            const formatWhen = (startIso, endIso) => {
+              try {
+                if (!startIso && !endIso) return '';
+                const s = startIso ? new Date(startIso) : null;
+                const e = endIso ? new Date(endIso) : null;
+                const optsDate = { year: 'numeric', month: 'short', day: 'numeric' };
+                const optsTime = { hour: 'numeric', minute: '2-digit' };
+                if (s && e) {
+                  const sameDay = s.toDateString() === e.toDateString();
+                  if (sameDay) {
+                    return `${s.toLocaleDateString(undefined, optsDate)} • ${s.toLocaleTimeString(undefined, optsTime)} – ${e.toLocaleTimeString(undefined, optsTime)}`;
+                  }
+                  return `${s.toLocaleString(undefined, { ...optsDate, ...optsTime })} → ${e.toLocaleString(undefined, { ...optsDate, ...optsTime })}`;
+                }
+                if (s) return s.toLocaleString(undefined, { ...optsDate, ...optsTime });
+                if (e) return e.toLocaleString(undefined, { ...optsDate, ...optsTime });
+                return '';
+              } catch (err) {
+                return '';
+              }
+            };
+            const whenText = formatWhen(createdStart, createdEnd);
             // Use the globally available googleCalendarIconUrl variable
             const eventSuccessHtml = `
                  <div class="create-event-box">
@@ -327,32 +318,32 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
                        </svg>
                     </div>
                     <div class="create-event-details">
-                       <div class="create-event-title">${escapeHtml(eventTitle)}</div> {# Escape title #}
+                       <div class="create-event-title">${escapeHtml(eventTitle)}</div>
                        <div class="create-event-subtitle success">Event created successfully</div>
-                    </div>
+                     </div>
                  </div>
               `;
             contentContainer.innerHTML = eventSuccessHtml;
 
         } else if (responseType === 'needs_connection') {
-            // Remove bubble class for structured content
-            contentContainer.classList.remove("bubble");
+            // Keep the bubble styling so it aligns with the agent avatar
+            contentContainer.classList.add('bubble');
             const connectedEmail = responseContent?.email || '';
+            const agentPrompt = responseContent?.message_for_user || 'Please connect your Google account.';
+            const connectHref = responseContent?.content_url || responseContent?.connect_url || googleConnectUrl;
             const needsConnectionHtml = `
-                 <div class="connect-account-section">
-                   <p class="connect-account-heading">Please connect your Google account.</p>
-                   <div class="connect-buttons">
-                      <a href="${googleConnectUrl}" class="google-connect-btn">
-                         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M17.64 9.2045C17.64 8.56567 17.5844 7.95816 17.4769 7.37974H9V10.7197H13.9183C13.6711 12.0829 12.9344 13.2644 11.8344 14.0153V16.2715H14.7776C16.5322 14.6384 17.64 12.2644 17.64 9.2045Z" fill="#4285F4"/>
-                            <path d="M9 18C11.43 18 13.46 17.19 14.96 15.94L11.83 14.01C11.09 14.5 10.1 14.81 9 14.81C6.81 14.81 4.96 13.45 4.36 11.54H1.33V13.8C2.84 16.85 5.62 18 9 18Z" fill="#34A853"/>
-                            <path d="M4.36 11.54C4.08 10.85 3.93 10.08 3.93 9.29C3.93 8.5 4.08 7.73 4.36 7.04V4.78H1.33C0.48 6.47 0 7.88 0 9.29C0 10.7 0.48 12.11 1.33 13.8L4.36 11.54Z" fill="#FBBC05"/>
-                            <path d="M9 3.87C10.14 3.87 11.15 4.26 11.96 5.05L15.01 2.01C13.46 0.76 11.43 0 9 0C5.62 0 2.84 1.15 1.33 4.19L4.36 6.46C4.96 4.55 6.81 3.19 9 3.19V3.87Z" fill="#EA4335"/>
-                         </svg>
-                         Connect ${escapeHtml(connectedEmail) || 'your Google account'}
-                      </a>
-                      <button class="skip-btn">Skip</button>
-                   </div>
+                 <p class="connect-account-heading">${escapeHtml(agentPrompt)}</p>
+                 <div class="connect-buttons">
+                   <a href="${connectHref}" class="google-connect-btn">
+                     <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M17.64 9.2045C17.64 8.56567 17.5844 7.95816 17.4769 7.37974H9V10.7197H13.9183C13.6711 12.0829 12.9344 13.2644 11.8344 14.0153V16.2715H14.7776C16.5322 14.6384 17.64 12.2644 17.64 9.2045Z" fill="#4285F4"/>
+                        <path d="M9 18C11.43 18 13.46 17.19 14.96 15.94L11.83 14.01C11.09 14.5 10.1 14.81 9 14.81C6.81 14.81 4.96 13.45 4.36 11.54H1.33V13.8C2.84 16.85 5.62 18 9 18Z" fill="#34A853"/>
+                        <path d="M4.36 11.54C4.08 10.85 3.93 10.08 3.93 9.29C3.93 8.5 4.08 7.73 4.36 7.04V4.78H1.33C0.48 6.47 0 7.88 0 9.29C0 10.7 0.48 12.11 1.33 13.8L4.36 11.54Z" fill="#FBBC05"/>
+                        <path d="M9 3.87C10.14 3.87 11.15 4.26 11.96 5.05L15.01 2.01C13.46 0.76 11.43 0 9 0C5.62 0 2.84 1.15 1.33 4.19L4.36 6.46C4.96 4.55 6.81 3.19 9 3.19V3.87Z" fill="#EA4335"/>
+                     </svg>
+                     Connect ${escapeHtml(connectedEmail) || 'your Google account'}
+                   </a>
+                   <button class="skip-btn">Skip</button>
                  </div>
                `;
             contentContainer.innerHTML = needsConnectionHtml;
@@ -361,6 +352,7 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
             // Remove bubble class for structured content
             contentContainer.classList.remove("bubble");
             const connectedEmail = responseContent?.email || 'Account';
+            console.log(connectedEmail)
             const connectedStatusHtml = `
                  <div class="connected-account-status">
                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -396,6 +388,57 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
 }
 
 
+// Show "create event loader and connect google account when user requests a calendar related task"
+function showCreateEventProgressThenSuccess(successContent){
+    const chatMessagesContainer = document.getElementById("chat-box")
+    const messageDiv = document.createElement("div")
+    messageDiv.classList.add("message", "agent-message")
+
+    const contentDiv = document.createElement("div")
+    contentDiv.classList.add("bubble")
+
+    // Create event (loading animation)
+    contentDiv.innerHTML =`
+        <div class="create-event-box">
+            <div class="create-event-icon">
+                ${googleCalendarIconUrl ? `<img src="${googleCalendarIconUrl}" alt="Google Calendar" width="24" height="24">`: ''}
+                <div class="circular-loader"></div>
+            </div>
+            <div class="create-event-details">
+                <div class="create-event-title">Creating event</div>
+                <div class="create-event-subtitle">Working on it...</div>
+            </div>
+        </div>
+    `
+    messageDiv.appendChild(contentDiv)
+    chatMessagesContainer.appendChild(messageDiv)
+    scrollChatToBottom()
+
+    // After a short delay, replace with success UI in the backend
+    setTimeout(() =>{
+        const eventTitle = successContent?.event_title || 'Your Event'
+        const connectedEmail = successContent?.connected_email || ''
+        contentDiv.classList.remove("bubble")
+        contentDiv.innerHTML = `
+            <div class="create-event-box">
+                <div class="create-event-icon">
+                    ${googleCalendarIconUrl ? `<img src="${googleCalendarIconUrl}" alt="Google Calendar" width="24" height="24">`: ''}
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z" fill="#34A853"/>
+                    </svg>
+                </div>
+                <div class="create-event-details">
+                    <div class="create-event-title">${escapeHtml(eventTitle)}</div>
+                    <div class="create-event-subtitle success">Event created successfully</div>
+                </div>
+            </div>
+        `
+        scrollChatToBottom()
+    }, 700)
+}
+
+
+
 // Function to update the conversation title in the recents list
 function updateRecentsTitle(convoId, newTitle) {
      const recentsList = document.getElementById('recents-list'); // Ensure recentsList is accessible
@@ -411,8 +454,15 @@ function updateRecentsTitle(convoId, newTitle) {
          if (recentLink) {
              // Use textContent to avoid rendering HTML from the title
              const plainTitle = String(newTitle || "New Chat").trim();
-             // Simple update without animation for now
-             recentLink.textContent = plainTitle;
+             recentLink.textContent = '';
+             let i = 0;
+             (function typeTitle() {
+                 if (i < plainTitle.length) {
+                     recentLink.append(plainTitle.charAt(i));
+                     i++;
+                     setTimeout(typeTitle, 120);  // 120 ms between chars
+                 }
+             })();
 
              // Ensure active state
              recentsList.querySelectorAll('li').forEach(li => li.classList.remove('active'));
@@ -432,10 +482,23 @@ function updateRecentsTitle(convoId, newTitle) {
 
 // --- Main DOMContentLoaded listener ---
 document.addEventListener("DOMContentLoaded", () => {
-    const chatMessagesContainer = document.getElementById("chat-log"); // Use getElementById
+    const chatMessagesContainer = document.getElementById("chat-box"); // Use getElementById
     const form = document.getElementById("chat-form"); // Use getElementById
     const recentsList = document.getElementById('recents-list'); // Use getElementById
     const initialMessagesOnLoad = chatMessagesContainer ? chatMessagesContainer.querySelectorAll('.message') : [];
+
+    // Wire up the send button to submit the form
+    const sendButton = document.getElementById('send-button');
+    if (sendButton && form) {
+        sendButton.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (typeof form.requestSubmit === 'function') {
+                form.requestSubmit();
+            } else {
+                form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+            }
+        });
+    }
 
 
     // --- Initial Page Load Rendering & Welcome Message Handling ---
@@ -562,7 +625,11 @@ document.addEventListener("DOMContentLoaded", () => {
                         "X-CSRFToken": csrfToken,
                     },
                     // Send message text and conversation ID in the JSON body
-                    body: JSON.stringify({ message: userMessage, conversation_id: conversationId }),
+                    body: JSON.stringify({
+                        message: userMessage,
+                        convo_id: conversationId,
+                        client_tz: (Intl && Intl.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined)
+                    }),
                 });
 
                 if (!response.ok) {
@@ -581,8 +648,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 console.log("AJAX response data received:", data);
 
                  // --- Handle Agent's Structured Response ---
-                if (data.agent_response_data) {
-                     const agentResponse = data.agent_response_data;
+                const agentResponse = data.agent_response_data || {
+                    type:    data.type,
+                    response:data.response,
+                    content: data.content || {}
+                };
+                if (agentResponse) {
                     const responseType = agentResponse.type || 'text';
                     const responseContent = responseType === 'text' ? agentResponse.response : agentResponse.content;
 
@@ -591,27 +662,72 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     // Use the existing placeholder element for the agent's response
                     // Pass the placeholder bubble element to appendMessage
-                     appendMessage("agent", agentResponse, false, data.conversation_id, isFirstActualMessageFromBackend, typingMessageElementPlaceholderBubble); // isTyping=false, pass placeholder
+                     appendMessage("agent", agentResponse, false, data.convo_id, isFirstActualMessageFromBackend, typingMessageElementPlaceholderBubble); // isTyping=false, pass placeholder
 
 
-                    // --- START: Handle new conversation creation & URL update (if it was the first message) ---
-                     // This block runs if the backend confirmed it was the first message and created a new convo
-                    if (isFirstActualMessageFromBackend && data.conversation_id) {
+                    // --- START: Handle new conversation creation & URL update ---
+                    if (isFirstActualMessageFromBackend && data.convo_id) {
                         console.log("Backend created/identified a new conversation with this message. Updating URL and sidebar.");
 
                         // Update the browser URL to the new conversation
-                        const newConvoUrl = `/agent/assistant/${data.conversation_id}/`;
-                        window.history.pushState({}, data.title || 'New Chat', newConvoUrl);
+                        const newConvoUrl = `/agent/assistant/${data.convo_id}/`;
+                        window.history.pushState({}, data.convo_title || 'New Chat', newConvoUrl);
 
-                        // Reload the page to sync the sidebar and chat with the backend
-                        window.location.reload();
-                        return; // Prevent further JS updates since reload is happening
+                        // We have already inserted the AI reply, updated the URL,
+                        // and will also update the sidebar below – no full-page reload needed.
+                        // (Keep the code that updates the sidebar right after this block.)
+
+                        // 1.   Update datasets so the next send goes to this convo
+                        form.dataset.initialConvoId          = data.convo_id;
+                        document.getElementById('chat-input').dataset.convoId = data.convo_id;
+
+                        // 2.   Build / replace the Recents-list item
+                        if (recentsList) {
+                            // Remove temporary placeholder, if any
+                            const placeholder = recentsList.querySelector('li[data-placeholder="true"]');
+                            if (placeholder) placeholder.remove();
+
+                            // See if an <li> for this convo already exists (backend rendered "New Chat")
+                            let li = recentsList.querySelector(`li[data-convo-id="${data.convo_id}"]`);
+                            if (li) {
+                                // Just update the title
+                                const link = li.querySelector('.recent-link');
+                                if (link) link.textContent = data.convo_title || 'New Chat';
+                            } else {
+                                // Otherwise build a brand-new entry
+                                li = document.createElement('li');
+                                li.dataset.convoId   = data.convo_id;
+                                li.dataset.deleteUrl = `/agent/assistant/delete_conversation/${data.convo_id}/`;
+                                li.className = 'active';
+
+                                const link = document.createElement('a');
+                                link.href  = `/agent/assistant/${data.convo_id}/`;
+                                link.className = 'recent-link';
+                                link.textContent = data.convo_title || 'New Chat';
+
+                                const delBtn = document.createElement('button');
+                                delBtn.className = 'delete-recent-btn';
+                                delBtn.innerHTML =
+                                    '<img src="/static/home_page/images/delete.png" alt="Delete">';
+                                li.appendChild(link);
+                                li.appendChild(delBtn);
+                            }
+
+                            // Mark active & move to top
+                            recentsList.querySelectorAll('li').forEach(liEl => liEl.classList.remove('active'));
+                            li.classList.add('active');
+                            recentsList.prepend(li);
+                        }
+
+                        // 3.  (Optional) scroll chat to bottom so the new answer is in view
+                        scrollChatToBottom();
+
                     } else {
                          console.log("This POST was to an existing conversation. Ensuring active state).");
                          // Ensure the correct item is marked active if not a new convo created by this post
                          const recentsList = document.getElementById('recents-list');
-                         if (recentsList && data.conversation_id) {
-                              const currentConvoItem = recentsList.querySelector(`li[data-convo-id="${data.conversation_id}"]`);
+                         if (recentsList && data.convo_id) {
+                              const currentConvoItem = recentsList.querySelector(`li[data-convo-id="${data.convo_id}"]`);
                               if (currentConvoItem) {
                                   recentsList.querySelectorAll('li').forEach(li => li.classList.remove('active'));
                                   currentConvoItem.classList.add('active');
@@ -621,7 +737,7 @@ document.addEventListener("DOMContentLoaded", () => {
                          }
                          // Title update for subsequent messages is handled above based on responseType
                     }
-                   // --- End: Handle new conversation creation & URL update ---
+                   // --- END ----------------------------------------------------
 
 
                 } else if (data.error) {
@@ -632,14 +748,14 @@ document.addEventListener("DOMContentLoaded", () => {
                          if(parentMessageDiv) parentMessageDiv.remove();
                     }
                     // Append error as a text message
-                    appendMessage("agent", { type: 'text', response: `Error: ${data.error}` }, false, data.conversation_id, data.is_first_actual_message); // Pass backend flag
+                    appendMessage("agent", { type: 'text', response: `Error: ${data.error}` }, false, data.convo_id, data.is_first_actual_message); // Pass backend flag
 
                      // If it was the first message but backend returned an error, update title immediately with fallback
-                     if (data.is_first_actual_message && data.conversation_id && data.title) {
+                     if (data.is_first_actual_message && data.convo_id && data.convo_title) {
                          console.log("First message, but backend returned error. Triggering immediate title update (likely fallback title).");
-                          updateRecentsTitle(data.conversation_id, data.title);
-                     } else if (data.conversation_id && data.title) {
-                          updateRecentsTitle(data.conversation_id, data.title);
+                          updateRecentsTitle(data.convo_id, data.convo_title);
+                     } else if (data.convo_id && data.convo_title) {
+                          updateRecentsTitle(data.convo_id, data.convo_title);
                      }
 
                 } else {
@@ -653,11 +769,11 @@ document.addEventListener("DOMContentLoaded", () => {
                       // Maybe append a generic message or just remove the placeholder.
                      // appendMessage("agent", { type: 'text', response: "Received empty response from agent." }, false);
                      // If it was the first message but backend returned nothing useful, update title
-                      if (data.is_first_actual_message && data.conversation_id && data.title) {
+                      if (data.is_first_actual_message && data.convo_id && data.convo_title) {
                          console.log("First message, but no agent response. Triggering immediate title update (likely fallback title).");
-                          updateRecentsTitle(data.conversation_id, data.title);
-                     } else if (data.conversation_id && data.title) {
-                          updateRecentsTitle(data.conversation_id, data.title);
+                          updateRecentsTitle(data.convo_id, data.convo_title);
+                     } else if (data.convo_id && data.convo_title) {
+                          updateRecentsTitle(data.convo_id, data.convo_title);
                      }
                 }
 
@@ -676,15 +792,12 @@ document.addEventListener("DOMContentLoaded", () => {
                  // This requires the convo ID to be available in the initial page context or the POST body
                  const currentConvoIdFromUrl = new URL(window.location.href).pathname.split('/').filter(part => part).pop(); // Get last non-empty part of path
                  // Check if it's a valid-looking UUID before using it
-                 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-                 const errorConvoId = (currentConvoIdFromUrl && uuidRegex.test(currentConvoIdFromUrl)) ? currentConvoIdFromUrl : (data && data.conversation_id ? data.conversation_id : null);
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                const errorConvoId = (currentConvoIdFromUrl && uuidRegex.test(currentConvoIdFromUrl)) ? currentConvoIdFromUrl : null;
 
-                 if (errorConvoId && data && data.title) { // Check if convoId is valid and data object exists and has title
+                if (errorConvoId) { // Best-effort title update
                       console.log("JS error on first message. Triggering immediate title update (fallback).");
-                       updateRecentsTitle(errorConvoId, data.title); // Use fallback title from potential data or just "New Chat"
-                 } else if (errorConvoId) {
-                     // If we have a convo ID but no title in the error response data, use a generic fallback
-                     updateRecentsTitle(errorConvoId, "Error occurred");
+                    updateRecentsTitle(errorConvoId, "Error occurred");
                  }
 
 
@@ -750,7 +863,61 @@ document.addEventListener("DOMContentLoaded", () => {
      }
 
 
-});
+    /* ======  KEEP GREY BACKGROUND ON CURRENT CONVERSATION  ====== */
+    if (recentsList) {
+        const currPath = window.location.pathname;
+        // On page-load: mark active based on current path
+        const links = recentsList.querySelectorAll('a.recent-link');
+        links.forEach(link => {
+            if (link.getAttribute('href') === currPath) {
+                recentsList.querySelectorAll('li').forEach(li => li.classList.remove('active'));
+                const li = link.closest('li');
+                if (li) li.classList.add('active');
+            }
+        });
+        // On click: visual feedback immediately
+        recentsList.addEventListener('click', (e) => {
+            const link = e.target.closest('a.recent-link');
+            if (!link || !recentsList.contains(link)) return;
+            recentsList.querySelectorAll('li').forEach(li => li.classList.remove('active'));
+            const li = link.closest('li');
+            if (li) li.classList.add('active');
+        });
+    }
+
+    /* --- Auto-resume after OAuth consent ( ?resume=true ) --- */
+    (function () {
+        const params = new URLSearchParams(window.location.search);
+        const resumeVal = params.get('resume');
+        if (resumeVal && resumeVal.startsWith('true')) {
+            const chat = document.getElementById('chat-box');
+            // Support both template-rendered and JS-rendered user bubbles
+            const candidates = chat.querySelectorAll('.message.user-message .message-text, .message.user-message .bubble');
+            const el = candidates.length ? candidates[candidates.length - 1] : null;
+            const text = el ? el.textContent.trim() : '';
+            if (text) {
+                const textarea = document.getElementById('chat-input');
+                const form = document.getElementById('chat-form');
+                const originalAction = form.action;
+                // Mark this submission so backend can optionally branch, then restore
+                form.action = originalAction + (originalAction.includes('?') ? '&' : '?') + 'resume=true';
+                textarea.value = text;
+                textarea.dispatchEvent(new Event('input'));
+                if (typeof form.requestSubmit === 'function') {
+                    form.requestSubmit();
+                } else {
+                    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+                }
+                // Clean up URL to avoid loops
+                const url = new URL(window.location.href);
+                url.searchParams.delete('resume');
+                window.history.replaceState({}, document.title, url.toString());
+                form.action = originalAction;
+            }
+        }
+    })();
+
+}); // End of DOMContentLoaded listener
 
 // Helper to force DOM reflow/repaint
 function forceReflow(element) {
@@ -856,13 +1023,13 @@ function sendUserMessage(messageText, conversationId, inputElement) {
                     } else if (response.error) {
                         // Handle error sent by the backend
                         const agentResponse = response; // The response itself contains the error
-                        appendMessage("agent", { type: 'text', response: `Error: ${agentResponse.error}` }, false, response.conversation_id, response.is_first_actual_message); // Use appendMessage for errors (ensure appendMessage is defined)
+                        appendMessage("agent", { type: 'text', response: `Error: ${agentResponse.error}` }, false, response.convo_id, response.is_first_actual_message); // Use appendMessage for errors (ensure appendMessage is defined)
                 
                     } else {
                          // Handle cases where backend returns an unexpected structure
                          console.warn("Backend response had no expected type ('text' or 'calendar_action_request') or error.", response);
                          // Optionally display a generic message or just remove the placeholder
-                         // appendMessage("agent", { type: 'text', response: "Received an unexpected response from the agent." }, false, response.conversation_id, response.is_first_actual_message);
+                         // appendMessage("agent", { type: 'text', response: "Received an unexpected response from the agent." }, false, response.convo_id, response.is_first_actual_message);
                          // If placeholder is still there, remove it.
                          $('#agent-thinking').remove(); // Should already be removed above, but safety
                     }
@@ -871,76 +1038,59 @@ function sendUserMessage(messageText, conversationId, inputElement) {
        
                    // --- Handle New Conversation Creation & Recents Update (if it was the first message) ---
                    // This logic runs if the backend confirmed it was the first message and created a new convo
-                   if (response.is_first_actual_message && response.conversation_id) {
-                       console.log("Backend created/identified a new conversation with this message. Updating URL and sidebar.");
-       
-                       // Update the browser URL to the new conversation
-                       const newConvoUrl = `/agent/assistant/${response.conversation_id}/`;
-                       window.history.pushState({}, response.convo_title || 'New Chat', newConvoUrl);
-       
-                       // Reload the page to sync the sidebar and chat with the backend
-                       window.location.reload();
-                       return; // Prevent further JS updates since reload is happening
-       
-                   } else if (response.conversation_id) {
-                        // If it was a subsequent message to an existing convo, just ensure the active state is correct
-                        const recentsList = $('#recents-list');
-                        recentsList.find('li').removeClass('active');
-                        const currentConvoItem = recentsList.find(`li[data-convo-id="${response.conversation_id}"]`);
-                        if (currentConvoItem.length) {
-                             currentConvoItem.addClass('active');
-                             // Move to top (optional)
-                            recentsList.prepend(currentConvoItem);
-                        }
-       
-                        // Update title for subsequent messages if backend sends a new one
-                        if (response.title) {
-                             updateRecentsTitle(response.conversation_id, response.title); // Ensure updateRecentsTitle is defined
-                        }
-       
-                   }
-       
-       
-                   // Final scroll to the bottom after all messages/elements are added
-                   chatBox.scrollTop(chatBox[0].scrollHeight);
-       
-                   // Clear the input field using the passed element
-                   if (inputElement) {
-                       inputElement.value = '';
-                       console.log("Input field cleared successfully in sendUserMessage success.");
-                   }
-       
-                   // Find the placeholder
-                   const placeholderLi = $('#recents-list li[data-placeholder="true"]');
-                   if (placeholderLi.length && response.conversation_id) {
-                       // Remove the placeholder
-                       placeholderLi.remove();
+                   if (response.is_first_actual_message && response.convo_id) {
+                       console.log("First message in new convo → updating URL & sidebar");
 
-                       // Create the new conversation li
-                       const newLiHtml = `
-                           <li data-convo-id="${response.conversation_id}" data-delete-url="/agent/assistant/delete_conversation/${response.conversation_id}/" class="active animate__animated animate__fadeIn">
-                               <a href="/agent/assistant/${response.conversation_id}/" class="recent-link">${escapeHtml(response.convo_title || 'New Chat')}</a>
-                               <button class="delete-recent-btn">
-                                   <img src="/static/home_page/images/delete.png" alt="Delete">
-                               </button>
+                       const newUrl = `/agent/assistant/${response.convo_id}/`;
+
+                       // Update browser URL without reload
+                       window.history.pushState({}, response.convo_title || 'New Chat', newUrl);
+
+                       // Update form/input so future sends keep using this convo
+                       $('#chat-form').data('initial-convo-id', response.convo_id);
+                       $('#chat-input').data('convo-id', response.convo_id);
+
+                       // Remove any placeholder li
+                       const placeholderLi = $('#recents-list li[data-placeholder="true"]');
+                       if (placeholderLi.length) placeholderLi.remove();
+
+                       // Build the new recents <li> with empty <a>, then type out the title
+                       const $newLi = $(`
+                           <li data-convo-id="${response.convo_id}"
+                               data-delete-url="/agent/assistant/delete_conversation/${response.convo_id}/"
+                               class="active animate__animated animate__fadeIn just-created">
+                             <a href="${newUrl}" class="recent-link"></a>
+                             <button class="delete-recent-btn">
+                               <img src="/static/home_page/images/delete.png" alt="Delete">
+                             </button>
                            </li>
-                       `;
-                       // Remove active from all others
-                       recentsList.find('li').removeClass('active');
-                       // Prepend and animate
-                       const $newLi = $(newLiHtml).hide();
-                       recentsList.prepend($newLi);
-                       $newLi.fadeIn(300);
+                       `);
 
-                       // Optionally, scroll into view
-                       $newLi[0].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                       // Animate the title typing
+                       const fullTitle = response.convo_title || 'New Chat';
+                       const $link     = $newLi.find('.recent-link');
+                       let i = 0;
+                       function typeTitle() {
+                           if (i < fullTitle.length) {
+                               $link.append(fullTitle.charAt(i));
+                               i++;
+                               setTimeout(typeTitle, 120);
+                           }
+                       }
+                       typeTitle();
 
-                       // Re-attach delete handler
+                       // Prepend and activate
+                       $('#recents-list li').removeClass('active');
+                       $('#recents-list').prepend($newLi);
+
+                       // Re-attach the delete-button handler
                        $newLi.find('.delete-recent-btn').on('click', function(e) {
                            e.preventDefault();
                            e.stopPropagation();
-                           // ... existing delete handler code ...
+                           // ... existing delete code ...
                        });
+
+                       return; 
                    }
        
                 },
@@ -1081,6 +1231,8 @@ function getCookie(name) {
 }
 
 
+
+
 $(document).ready(function() {
     const messageInput = $('#chat-input');
     const sendButton = $('#send-button');
@@ -1182,23 +1334,28 @@ $(document).ready(function() {
     // ... rest of your JS code (input clearing, event handlers, sendUserMessage function etc.) ...
 
     // Handle sending message on button click
-    sendButton.on('click', function() {
-        const form = document.getElementById('chat-form');
-        if (form && typeof form.requestSubmit === 'function') {
-            form.requestSubmit();
-        }
-    });
+    // sendButton.on('click', function(e) {
+    //     e.preventDefault();
+    //     const messageText = messageInput.val().trim();
+    //     if (messageText) {
+    //         const conversationId = chatForm.data('initial-convo-id');
+    //         console.log("Send button clicked - Using conversation ID:", conversationId);
+    //         sendUserMessage(messageText, conversationId, messageInput[0]);
+    //     }
+    // });
 
     // Handle sending message on pressing Enter key
-    messageInput.on('keydown', function(e) {
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            const form = document.getElementById('chat-form');
-            if (form && typeof form.requestSubmit === 'function') {
-                form.requestSubmit();
-            }
-        }
-    });
+    // messageInput.on('keydown', function(e) {
+    //     if (e.key === "Enter" && !e.shiftKey) {
+    //         e.preventDefault();
+    //         const messageText = messageInput.val().trim();
+    //         if (messageText) {
+    //             const conversationId = chatForm.data('initial-convo-id');
+    //             console.log("Enter key pressed - Using conversation ID:", conversationId);
+    //             sendUserMessage(messageText, conversationId, messageInput[0]);
+    //         }
+    //     }
+    // });
 
     recentsList.on('click', '.delete-recent-btn', function(e){
         e.preventDefault(); // Prevent the default link behavior of the parent li/a
@@ -1274,10 +1431,10 @@ $(document).ready(function() {
         }
     })
 
-    $('.new-task-btn').on('click', function(e) {
-        currentConversationId = null;
-        e.preventDefault();
-        window.location.href = '/agent/assistant/new-placeholder/';
+    $('.new-task-btn').on('click', function (e) {
+        // Let the normal link (<a href="/agent/assistant/new/…">) do its job.
+        // If JS is enabled we still prevent double clicks.
+        $(this).addClass('disabled');
     });
 
     // Animate the recents list title if just created
@@ -1291,11 +1448,31 @@ $(document).ready(function() {
             if (i < fullTitle.length) {
                 link.append(fullTitle.charAt(i));
                 i++;
-                setTimeout(typeTitle, 30); // Adjust speed as needed
+                setTimeout(typeTitle, 120); // slower animation
             }
         }
         typeTitle();
         justCreatedLi.removeClass('just-created'); // Remove marker after animation
+    }
+
+    /* ======  KEEP GREY BACKGROUND ON CURRENT CONVERSATION  ====== */
+    if (recentsList.length) {
+        const currPath = window.location.pathname;
+
+        /* --- On page-load: mark the item whose <a href> matches the current URL --- */
+        recentsList.find('a.recent-link').each(function () {
+            if (this.getAttribute('href') === currPath) {
+                recentsList.find('li').removeClass('active');
+                $(this).closest('li').addClass('active');
+                return false;   // break out of .each loop
+            }
+        });
+
+        /* --- On click: give immediate visual feedback before navigation --- */
+        recentsList.on('click', 'a.recent-link', function () {
+            recentsList.find('li').removeClass('active');
+            $(this).closest('li').addClass('active');
+        });
     }
 
 }); // End of $(document).ready(...)

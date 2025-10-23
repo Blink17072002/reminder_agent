@@ -103,12 +103,11 @@ body, html {
 }
 
 /* Active state: stick background */
-.sidebar .recents ul li a:hover,
-.sidebar .recents ul li.active a,
-.sidebar .recents ul li a.active {
-  background: #e1e5e7;
+.sidebar .recents ul li:hover > a,
+.sidebar .recents ul li.active > a {
+  background-color: #e1e5e7;
   color: #202124;
-  border-radius: 12px;
+  border-radius: 4px;
 }
 
 /* Sidebar wrapper & toggle */
@@ -219,10 +218,19 @@ body, html {
   padding: 8px 15px;
 }
 
+.user-message .message-bubble a{
+  text-decoration: none;
+}
+
 .agent-message .message-bubble {
   background: #fff;
   color: #202124;
   padding: 3px 15px;
+}
+
+/* Prevent link underlines specifically in assistant messages */
+.agent-message .message-bubble a {
+  text-decoration: none;
 }
 
 
@@ -403,11 +411,16 @@ body:not(.sidebar-collapsed) .edit-btn {
 .create-event-box,
 .connect-account-section,
 .connected-account-status {
-  margin-left: 48px; /* roughly avatar width + margin */
-  margin-right: 16px; /* Add some right margin for alignment */
-  /* ensure these are within the bot-message bubble flow */
-  /* add max-width if necessary */
-  max-width: fit-content; /* Adjust based on desired appearance */
+  margin-left: 0px; /* roughly avatar width + margin */
+  margin-right: 0px; /* Add some right margin for alignment */
+}
+
+/* If these boxes are ever rendered inside a bubble wrapper, avoid double-indentation */
+.agent-message .bubble .create-event-box,
+.agent-message .bubble .connect-account-section,
+.agent-message .bubble .connected-account-status {
+  margin-left: 0;
+  margin-right: 0;
 }
 
 
@@ -518,6 +531,7 @@ body:not(.sidebar-collapsed) .edit-btn {
   font-size: 14px;
   cursor: pointer;
   transition: background-color 0.2s ease;
+  text-decoration: none;
 }
 .google-connect-btn:hover {
    background-color: #357ae8; /* slightly darker lighter blue on hover */

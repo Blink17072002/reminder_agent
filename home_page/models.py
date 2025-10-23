@@ -18,8 +18,15 @@ class Conversation(models.Model):
 class Message(models.Model):
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name="messages")
     sender = models.CharField(max_length=10, choices=[('user', 'User'), ('agent', 'Agent')])
-    text = models.TextField()
+    # Allow empty text so we can store structured messages (e.g., event cards)
+    text = models.TextField(blank=True, default='')
+    # Persist the semantic type of the message for proper rehydration on reload
+    message_type = models.CharField(max_length=40, default='text')
+    # Optional JSON payload for structured content
+    content = models.JSONField(blank=True, null=True)
     timestamp = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Message from {self.sender} at {self.timestamp}"
+        kind = getattr(self, 'message_type', 'text') or 'text'
+        preview = (self.text or '').strip()[:30]
+        return f"{kind} from {self.sender} at {self.timestamp}: {preview}"
