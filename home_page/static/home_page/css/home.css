@@ -482,6 +482,16 @@ body:not(.sidebar-collapsed) .edit-btn {
   margin-top: 2px;
 }
 
+/* Agent Explanation Styling */
+.agent-explanation {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #f0f0f0;
+  font-size: 11px;
+  color: #5f6368;
+  line-height: 1.4;
+}
+
 /* New: Circular loading animation - Position and size */
 .circular-loader {
   position: absolute; /* Position relative to .create-event-icon */
@@ -610,5 +620,161 @@ body:not(.sidebar-collapsed) .edit-btn {
     display: flex; /* Show button on hover or when active */
 }
 
+/* Intent Confirmation Styles */
+.intent-confirmation {
+    margin: 8px 0;
+    opacity: 1;
+    transition: opacity 0.3s ease-out;
+}
+
+.intent-confirmation-box {
+    display: inline-block;
+    max-width: 80%;
+}
+
+.intent-confirmation-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    min-width: 200px;
+    animation: contentFadeIn 0.3s ease-out;
+}
+
+/* Fade in animation for the entire content */
+@keyframes contentFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Intent confirmation confirmed state inherits base styling */
+
+.intent-progress-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #d1d5db;
+    border-top-color: #3b49df;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.intent-confirmation-icon {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #22c55e;
+    font-weight: bold;
+    font-size: 14px;
+    animation: iconBounce 0.6s ease-out;
+}
+
+/* Bounce animation for the checkmark icon */
+@keyframes iconBounce {
+    0% {
+        opacity: 0;
+        transform: scale(0.3);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.1);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.intent-confirmation-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: #6b7280;
+    white-space: nowrap;
+    animation: fadeSlideIn 0.4s ease-out;
+}
+
+/* Add gentle pulsing effect for processing state */
+.intent-confirmation-title.processing {
+    animation: fadeSlideIn 0.4s ease-out, gentlePulse 2s ease-in-out infinite;
+}
+
+/* Gentle pulsing animation */
+@keyframes gentlePulse {
+    0%, 100% {
+        opacity: 0.8;
+        transform: translateX(0);
+    }
+    50% {
+        opacity: 1;
+        transform: translateX(1px);
+    }
+}
+
+/* Fade and slide in animation for intent text */
+@keyframes fadeSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.intent-confirmation-content.confirmed .intent-confirmation-title,
+.intent-confirmation-title.confirmed {
+    color: #22c55e;
+    animation: confirmSlideIn 0.5s ease-out;
+}
+
+/* Slide in animation for confirmed intent */
+@keyframes confirmSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-15px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Fade out animation for intent confirmation */
+.intent-confirmation.intent-confirmed {
+    animation: fadeOut 0.3s ease-out 1.5s forwards;
+}
+
+@keyframes fadeOut {
+    to {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+}
+
+/* Ensure intent confirmation doesn't interfere with message bubbles */
+.message.intent-confirmation .avatar {
+    opacity: 0.6;
+}
+
+
+/* Hide duplicate agent avatars for consecutive agent messages */
+#chat-box .message.agent-message + .message.agent-message .avatar.agent-avatar {
+    visibility: hidden;
+}
 
 

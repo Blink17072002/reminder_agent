@@ -210,33 +210,30 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
          messageDiv.dataset.isFirstActualMessage = 'true';
     }
 
-     // Give an avatar to user messages AND to all agent bubbles (including structured ones)
-    if (!placeholderElement || messageDiv.querySelector('.avatar')) {
-      if (
-        sender === 'user' ||
-        (sender === 'agent' && 
-          ['text','needs_connection','event_success','connected_status'].includes(responseType)
-        )
-      ) {
-        avatarDiv = messageDiv.querySelector('.avatar') || document.createElement("div");
-        avatarDiv.classList.add('avatar', sender + '-avatar');
-        messageDiv.prepend(avatarDiv);
+     // Give an avatar to user messages AND to all agent messages, but avoid duplicates
+    if (sender === 'user' || sender === 'agent') {
+        // Check if avatar already exists to avoid duplicates
+        avatarDiv = messageDiv.querySelector('.avatar');
+        if (!avatarDiv) {
+            avatarDiv = document.createElement("div");
+            avatarDiv.classList.add('avatar', sender + '-avatar');
+            messageDiv.prepend(avatarDiv);
 
-        if (sender === 'user') {
-            const userAvatarMain = document.querySelector('.nav-user .avatar');
-            const userInitial = userAvatarMain ? userAvatarMain.textContent.trim() : 'U';
-            avatarDiv.textContent = userInitial;
+            if (sender === 'user') {
+                const userAvatarMain = document.querySelector('.nav-user .avatar');
+                const userInitial = userAvatarMain ? userAvatarMain.textContent.trim() : 'U';
+                avatarDiv.textContent = userInitial;
 
-        } else { // agent avatar (calendar icon SVG)
-            avatarDiv.innerHTML = `
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14
-                         c0 1.1.9 2 2 2h14
-                         c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM19 20H5V8h14v12z"
-                      fill="#5F6368"/>
-              </svg>`;
+            } else { // agent avatar (calendar icon SVG)
+                avatarDiv.innerHTML = `
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14
+                             c0 1.1.9 2 2 2h14
+                             c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM19 20H5V8h14v12z"
+                          fill="#5F6368"/>
+                  </svg>`;
+            }
         }
-      }
     }
 
 
@@ -309,6 +306,8 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
             };
             const whenText = formatWhen(createdStart, createdEnd);
             // Use the globally available googleCalendarIconUrl variable
+            const agentExplanationText = responseData.content?.agent_explanation || '';
+            
             const eventSuccessHtml = `
                  <div class="create-event-box">
                     <div class="create-event-icon">
@@ -324,6 +323,14 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
                  </div>
               `;
             contentContainer.innerHTML = eventSuccessHtml;
+            // Append a typed agent text bubble within the same message (avoid duplicate avatar)
+            if (agentExplanationText) {
+                const explainBubble = document.createElement('div');
+                explainBubble.classList.add('bubble');
+                // Append inside the structured content container so it appears below the card
+                contentContainer.appendChild(explainBubble);
+                typeText(explainBubble, agentExplanationText, 3, scrollChatToBottom);
+            }
 
         } else if (responseType === 'needs_connection') {
             // Keep the bubble styling so it aligns with the agent avatar
@@ -419,6 +426,13 @@ function showCreateEventProgressThenSuccess(successContent){
         const eventTitle = successContent?.event_title || 'Your Event'
         const connectedEmail = successContent?.connected_email || ''
         contentDiv.classList.remove("bubble")
+        const agentExplanationText = successContent?.agent_explanation || '';
+        
+        let agentExplanation = '';
+        if (agentExplanationText) {
+            agentExplanation = `<div class="agent-explanation">${escapeHtml(agentExplanationText).replace(/\n/g, '<br>')}</div>`;
+        }
+        
         contentDiv.innerHTML = `
             <div class="create-event-box">
                 <div class="create-event-icon">
@@ -430,6 +444,7 @@ function showCreateEventProgressThenSuccess(successContent){
                 <div class="create-event-details">
                     <div class="create-event-title">${escapeHtml(eventTitle)}</div>
                     <div class="create-event-subtitle success">Event created successfully</div>
+                    ${agentExplanation}
                 </div>
             </div>
         `
@@ -513,10 +528,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
          initialMessagesOnLoad.forEach(messageDiv => {
              const sender = messageDiv.dataset.sender;
-             const rawText = messageDiv.dataset.raw;
              const bubble = messageDiv.querySelector('.bubble'); // Get the bubble inside the message
 
              if (bubble) { // Check if bubble exists
+                 const rawText = bubble.dataset.raw; // Get raw text from bubble, not messageDiv
                  // If it's the welcome message rendered by Django, animate it
                  if (bubble.dataset.welcomeMessage === 'true') { // Check for the data attribute on the bubble
                       console.log("Found initial welcome message (from template). Starting animation.");
@@ -526,6 +541,7 @@ document.addEventListener("DOMContentLoaded", () => {
                       typeText(bubble, rawText || bubble.innerHTML, 10, scrollChatToBottom); // Use data-raw or innerHTML as fallback
                  } else if (sender === 'agent' && rawText !== undefined) {
                       // Render markdown for other agent messages statically if raw text is available
+                      console.log("Rendering markdown for agent message:", rawText);
                       bubble.innerHTML = marked.parse(rawText);
                  } else if (sender === 'user') {
                       // Render plain text for user messages statically
@@ -536,10 +552,6 @@ document.addEventListener("DOMContentLoaded", () => {
                  // Currently, only text messages (including welcome) are rendered by template
                  // Add logic here if other types (like needs_connection) can be pre-rendered
                  console.warn("Message div found without a bubble element during initial render:", messageDiv);
-                 // If no bubble but raw text exists, just add it plain for now
-                 if (rawText !== undefined) {
-                      messageDiv.textContent = rawText;
-                 }
             }
          });
 
@@ -608,9 +620,8 @@ document.addEventListener("DOMContentLoaded", () => {
             removeWelcomeMessage();
 
 
-            // Append a placeholder for the agent's reply (potential typing indicator)
-            // Pass a minimal responseData object to indicate expected type (text) for typing
-            const typingMessageElementPlaceholderBubble = appendMessage("agent", { type: 'text', response: '' }, true, conversationId, false); // Append typing indicator
+            // Show intent confirmation modal BEFORE processing
+            const intentElement = showIntentConfirmation();
 
 
             try {
@@ -634,159 +645,293 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 if (!response.ok) {
                      console.error("Fetch failed with status:", response.status, response.statusText);
-                     // Remove placeholder and show an error message
-                     if (typingMessageElementPlaceholderBubble) {
-                         const parentMessageDiv = typingMessageElementPlaceholderBubble.closest('.message');
-                         if(parentMessageDiv) parentMessageDiv.remove();
+                     // Reuse the intent confirmation structure for error display
+                     if (intentElement && intentElement.mainContentDiv) {
+                         intentElement.mainContentDiv.className = 'bubble'; // Change to bubble class
+                         intentElement.mainContentDiv.innerHTML = `Error communicating with the server (${response.status}). Please try again.`;
+                     } else {
+                         // Fallback if intent element is not available
+                         appendMessage("agent", { type: 'text', response: `Error communicating with the server (${response.status}). Please try again.` }, false, conversationId, false);
                      }
-                     // Append error as a text message
-                     appendMessage("agent", { type: 'text', response: `Error communicating with the server (${response.status}). Please try again.` }, false, conversationId, false);
                      return;
                 }
 
                 const data = await response.json();
                 console.log("AJAX response data received:", data);
 
-                 // --- Handle Agent's Structured Response ---
-                const agentResponse = data.agent_response_data || {
-                    type:    data.type,
-                    response:data.response,
-                    content: data.content || {}
-                };
-                if (agentResponse) {
-                    const responseType = agentResponse.type || 'text';
-                    const responseContent = responseType === 'text' ? agentResponse.response : agentResponse.content;
+                // Update intent confirmation with the received intent
+                if (intentElement && data.intent) {
+                    updateIntentConfirmation(intentElement, data.intent);
+                }
 
-                    // Determine if it's the first message exchange *based on the backend response*
-                    const isFirstActualMessageFromBackend = data.is_first_actual_message === true;
-
-                    // Use the existing placeholder element for the agent's response
-                    // Pass the placeholder bubble element to appendMessage
-                     appendMessage("agent", agentResponse, false, data.convo_id, isFirstActualMessageFromBackend, typingMessageElementPlaceholderBubble); // isTyping=false, pass placeholder
-
-
-                    // --- START: Handle new conversation creation & URL update ---
-                    if (isFirstActualMessageFromBackend && data.convo_id) {
-                        console.log("Backend created/identified a new conversation with this message. Updating URL and sidebar.");
-
-                        // Update the browser URL to the new conversation
-                        const newConvoUrl = `/agent/assistant/${data.convo_id}/`;
-                        window.history.pushState({}, data.convo_title || 'New Chat', newConvoUrl);
-
-                        // We have already inserted the AI reply, updated the URL,
-                        // and will also update the sidebar below – no full-page reload needed.
-                        // (Keep the code that updates the sidebar right after this block.)
-
-                        // 1.   Update datasets so the next send goes to this convo
-                        form.dataset.initialConvoId          = data.convo_id;
-                        document.getElementById('chat-input').dataset.convoId = data.convo_id;
-
-                        // 2.   Build / replace the Recents-list item
-                        if (recentsList) {
-                            // Remove temporary placeholder, if any
-                            const placeholder = recentsList.querySelector('li[data-placeholder="true"]');
-                            if (placeholder) placeholder.remove();
-
-                            // See if an <li> for this convo already exists (backend rendered "New Chat")
-                            let li = recentsList.querySelector(`li[data-convo-id="${data.convo_id}"]`);
-                            if (li) {
-                                // Just update the title
-                                const link = li.querySelector('.recent-link');
-                                if (link) link.textContent = data.convo_title || 'New Chat';
-                            } else {
-                                // Otherwise build a brand-new entry
-                                li = document.createElement('li');
-                                li.dataset.convoId   = data.convo_id;
-                                li.dataset.deleteUrl = `/agent/assistant/delete_conversation/${data.convo_id}/`;
-                                li.className = 'active';
-
-                                const link = document.createElement('a');
-                                link.href  = `/agent/assistant/${data.convo_id}/`;
-                                link.className = 'recent-link';
-                                link.textContent = data.convo_title || 'New Chat';
-
-                                const delBtn = document.createElement('button');
-                                delBtn.className = 'delete-recent-btn';
-                                delBtn.innerHTML =
-                                    '<img src="/static/home_page/images/delete.png" alt="Delete">';
-                                li.appendChild(link);
-                                li.appendChild(delBtn);
-                            }
-
-                            // Mark active & move to top
-                            recentsList.querySelectorAll('li').forEach(liEl => liEl.classList.remove('active'));
-                            li.classList.add('active');
-                            recentsList.prepend(li);
+                // Continue with normal response processing after a short delay
+                setTimeout(() => {
+                    // --- Handle Agent's Structured Response ---
+                    const agentResponse = data.agent_response_data || {
+                        type:    data.type,
+                        response:data.response,
+                        content: data.content || {}
+                    };
+                    if (agentResponse) {
+                        const responseType = agentResponse.type || 'text';
+                        const responseContent = responseType === 'text' ? agentResponse.response : agentResponse.content;
+                        
+                        // Debug logging (remove when issues are resolved)
+                        if (responseType === 'calendar_action_request' && responseContent?.action === 'unknown') {
+                            console.log("⚠️ Got 'unknown' action - this usually means AI returned multiple JSON objects");
+                            console.log("Response details:", responseContent?.details);
                         }
 
-                        // 3.  (Optional) scroll chat to bottom so the new answer is in view
-                        scrollChatToBottom();
+                        // Determine if it's the first message exchange *based on the backend response*
+                        const isFirstActualMessageFromBackend = data.is_first_actual_message === true;
+
+                        // Reuse the existing intent confirmation message structure for typing indicator
+                        if (intentElement && intentElement.mainContentDiv) {
+                            // Ensure the container is visible (in case any previous styles hid it)
+                            intentElement.mainContentDiv.style.display = '';
+                            intentElement.mainContentDiv.style.opacity = '1';
+                            // Clear the intent confirmation content and show typing indicator
+                            intentElement.mainContentDiv.innerHTML = `
+                                <div class="bubble">
+                                    <div class="typing-indicator">
+                                        <span></span><span></span><span></span>
+                                    </div>
+                                </div>
+                            `;
+                            intentElement.messageDiv.classList.add("typing-message");
+                            scrollChatToBottom();
+
+                            // After a brief moment, show the actual response in the same container
+                            setTimeout(() => {
+                                // Remove typing indicator and show actual response
+                                intentElement.messageDiv.classList.remove("typing-message");
+                                intentElement.messageDiv.dataset.sender = "agent";
+                                if (data.convo_id) {
+                                    intentElement.messageDiv.dataset.convoId = data.convo_id;
+                                }
+                                if (isFirstActualMessageFromBackend) {
+                                    intentElement.messageDiv.dataset.isFirstActualMessage = 'true';
+                                }
+
+                                // Handle different response types in the reused container
+                                if (responseType === 'text') {
+                                    const textContent = responseContent || '';
+                                    intentElement.messageDiv.dataset.raw = textContent;
+                                    
+                                    // Clear existing content and change class from intent-confirmation-box to bubble
+                                    intentElement.mainContentDiv.innerHTML = '';
+                                    intentElement.mainContentDiv.className = 'bubble'; // Replace all classes with bubble
+                                    
+                                    // Use typeText for typing animation directly on the main content div
+                                    typeText(intentElement.mainContentDiv, textContent, 3, scrollChatToBottom);
+                                    
+                                } else {
+                                    // Handle other response types (calendar actions, etc.) directly
+                                    intentElement.mainContentDiv.innerHTML = '';
+                                    intentElement.mainContentDiv.className = ''; // Clear all classes first
+                                    
+                                    // Handle different response types directly without creating new messages
+                                    if (responseType === 'event_success') {
+                                        // Don't add bubble class for structured content - leave it empty
+                                        const eventTitle = responseContent?.event_title || 'Your Event';
+                                        const connectedEmail = responseContent?.connected_email || '';
+                                        const eventLink = responseContent?.event_link || '';
+                                        const createdStart = responseContent?.created_start || '';
+                                        const createdEnd = responseContent?.created_end || '';
+
+                                        const agentExplanationText = agentResponse.content?.agent_explanation || '';
+                                        
+                                        const eventSuccessHtml = `
+                                             <div class="create-event-box">
+                                                <div class="create-event-icon">
+                                                   ${googleCalendarIconUrl ? `<img src="${googleCalendarIconUrl}" alt="Google Calendar" width="24" height="24">` : ''}
+                                                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                     <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z" fill="#34A853"/>
+                                                   </svg>
+                                                </div>
+                                                <div class="create-event-details">
+                                                   <div class="create-event-title">${escapeHtml(eventTitle)}</div>
+                                                   <div class="create-event-subtitle success">Event created successfully</div>
+                                                 </div>
+                                             </div>
+                                          `;
+                                        intentElement.mainContentDiv.innerHTML = eventSuccessHtml;
+                                        // Append a typed agent text bubble within the same message (avoid duplicate avatar)
+                                        if (agentExplanationText) {
+                                            const explainBubble = document.createElement('div');
+                                            explainBubble.classList.add('bubble');
+                                            // Append inside the main content div so it appears below the card
+                                            intentElement.mainContentDiv.appendChild(explainBubble);
+                                            typeText(explainBubble, agentExplanationText, 3, scrollChatToBottom);
+                                        }
+
+                                    } else if (responseType === 'needs_connection') {
+                                        // Keep the bubble styling so it aligns with the agent avatar
+                                        intentElement.mainContentDiv.className = 'bubble';
+                                        const connectedEmail = responseContent?.email || '';
+                                        const agentPrompt = responseContent?.message_for_user || 'Please connect your Google account.';
+                                        const connectHref = responseContent?.content_url || responseContent?.connect_url || googleConnectUrl;
+                                        
+                                        const needsConnectionHtml = `
+                                             <p class="connect-account-heading">${escapeHtml(agentPrompt)}</p>
+                                             <div class="connect-buttons">
+                                               <a href="${connectHref}" class="google-connect-btn">
+                                                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                    <path d="M17.64 9.2045C17.64 8.56567 17.5844 7.95816 17.4769 7.37974H9V10.7197H13.9183C13.6711 12.0829 12.9344 13.2644 11.8344 14.0153V16.2715H14.7776C16.5322 14.6384 17.64 12.2644 17.64 9.2045Z" fill="#4285F4"/>
+                                                    <path d="M9 18C11.43 18 13.46 17.19 14.96 15.94L11.83 14.01C11.09 14.5 10.1 14.81 9 14.81C6.81 14.81 4.96 13.45 4.36 11.54H1.33V13.8C2.84 16.85 5.62 18 9 18Z" fill="#34A853"/>
+                                                    <path d="M4.36 11.54C4.08 10.85 3.93 10.08 3.93 9.29C3.93 8.5 4.08 7.73 4.36 7.04V4.78H1.33C0.48 6.47 0 7.88 0 9.29C0 10.7 0.48 12.11 1.33 13.8L4.36 11.54Z" fill="#FBBC05"/>
+                                                    <path d="M9 3.87C10.14 3.87 11.15 4.26 11.96 5.05L15.01 2.01C13.46 0.76 11.43 0 9 0C5.62 0 2.84 1.15 1.33 4.19L4.36 6.46C4.96 4.55 6.81 3.19 9 3.19V3.87Z" fill="#EA4335"/>
+                                                 </svg>
+                                                 Connect ${escapeHtml(connectedEmail) || 'your Google account'}
+                                               </a>
+                                               <button class="skip-btn">Skip</button>
+                                             </div>
+                                           `;
+                                        intentElement.mainContentDiv.innerHTML = needsConnectionHtml;
+
+                                    } else if (responseType === 'connected_status') {
+                                        // Don't use bubble class for structured content - leave it empty
+                                        const connectedEmail = responseContent?.email || 'Account';
+                                        
+                                        const connectedStatusHtml = `
+                                             <div class="connected-account-status">
+                                               <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                  <path d="M17.64 9.2045C17.64 8.56567 17.5844 7.95816 17.4769 7.37974H9V10.7197H13.9183C13.6711 12.0829 12.9344 13.2644 11.8344 14.0153V16.2715H14.7776C16.5322 14.6384 17.64 12.2644 17.64 9.2045Z" fill="#4285F4"/>
+                                                  <path d="M9 18C11.43 18 13.46 17.19 14.96 15.94L11.83 14.01C11.09 14.5 10.1 14.81 9 14.81C6.81 14.81 4.96 13.45 4.36 11.54H1.33V13.8C2.84 16.85 5.62 18 9 18Z" fill="#34A853"/>
+                                                  <path d="M4.36 11.54C4.08 10.85 3.93 10.08 3.93 9.29C3.93 8.5 4.08 7.73 4.36 7.04V4.78H1.33C0.48 6.47 0 7.88 0 9.29C0 10.7 0.48 12.11 1.33 13.8L4.36 11.54Z" fill="#FBBC05"/>
+                                                  <path d="M9 3.87C10.14 3.87 11.15 4.26 11.96 5.05L15.01 2.01C13.46 0.76 11.43 0 9 0C5.62 0 2.84 1.15 1.33 4.19L4.36 6.46C4.96 4.55 6.81 3.19 9 3.19V3.87Z" fill="#EA4335"/>
+                                               </svg>
+                                               <span class="connected-text">${escapeHtml(connectedEmail)} connected</span>
+                                               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                 <path d="M9 16.17L5.41 12.59L4 14L9 19L20 8L18.59 6.59L9 16.17Z" fill="#9AA0A6"/>
+                                               </svg>
+                                             </div>
+                                           `;
+                                        intentElement.mainContentDiv.innerHTML = connectedStatusHtml;
+                                    }
+                                }
+                                
+                                scrollChatToBottom();
+                            }, 800);
+                        }
+
+                        // --- START: Handle new conversation creation & URL update ---
+                        if (isFirstActualMessageFromBackend && data.convo_id) {
+                            console.log("Backend created/identified a new conversation with this message. Updating URL and sidebar.");
+
+                            // Update the browser URL to the new conversation
+                            const newConvoUrl = `/agent/assistant/${data.convo_id}/`;
+                            window.history.pushState({}, data.convo_title || 'New Chat', newConvoUrl);
+
+                            // We have already inserted the AI reply, updated the URL,
+                            // and will also update the sidebar below – no full-page reload needed.
+                            // (Keep the code that updates the sidebar right after this block.)
+
+                            // 1.   Update datasets so the next send goes to this convo
+                            form.dataset.initialConvoId          = data.convo_id;
+                            document.getElementById('chat-input').dataset.convoId = data.convo_id;
+
+                            // 2.   Build / replace the Recents-list item
+                            if (recentsList) {
+                                // Remove temporary placeholder, if any
+                                const placeholder = recentsList.querySelector('li[data-placeholder="true"]');
+                                if (placeholder) placeholder.remove();
+
+                                // See if an <li> for this convo already exists (backend rendered "New Chat")
+                                let li = recentsList.querySelector(`li[data-convo-id="${data.convo_id}"]`);
+                                if (li) {
+                                    // Just update the title
+                                    const link = li.querySelector('.recent-link');
+                                    if (link) link.textContent = data.convo_title || 'New Chat';
+                                } else {
+                                    // Otherwise build a brand-new entry
+                                    li = document.createElement('li');
+                                    li.dataset.convoId   = data.convo_id;
+                                    li.dataset.deleteUrl = `/agent/assistant/delete_conversation/${data.convo_id}/`;
+                                    li.className = 'active';
+
+                                    const link = document.createElement('a');
+                                    link.href  = `/agent/assistant/${data.convo_id}/`;
+                                    link.className = 'recent-link';
+                                    link.textContent = data.convo_title || 'New Chat';
+
+                                    const delBtn = document.createElement('button');
+                                    delBtn.className = 'delete-recent-btn';
+                                    delBtn.innerHTML =
+                                        '<img src="/static/home_page/images/delete.png" alt="Delete">';
+                                    li.appendChild(link);
+                                    li.appendChild(delBtn);
+                                }
+
+                                // Mark active & move to top
+                                recentsList.querySelectorAll('li').forEach(liEl => liEl.classList.remove('active'));
+                                li.classList.add('active');
+                                recentsList.prepend(li);
+                            }
+
+                            // 3.  (Optional) scroll chat to bottom so the new answer is in view
+                            scrollChatToBottom();
+
+                        } else {
+                             console.log("This POST was to an existing conversation. Ensuring active state).");
+                             // Ensure the correct item is marked active if not a new convo created by this post
+                             const recentsList = document.getElementById('recents-list');
+                             if (recentsList && data.convo_id) {
+                                  const currentConvoItem = recentsList.querySelector(`li[data-convo-id="${data.convo_id}"]`);
+                                  if (currentConvoItem) {
+                                      recentsList.querySelectorAll('li').forEach(li => li.classList.remove('active'));
+                                      currentConvoItem.classList.add('active');
+                                      // Move to top (optional)
+                                      recentsList.prepend(currentConvoItem);
+                                  }
+                             }
+                                 // Title update for subsequent messages is handled above based on responseType
+                        }
+                       // --- END ----------------------------------------------------
+
+                    } else if (data.error) {
+                        // Display error message if backend sends one
+                        // Reuse the intent confirmation structure for error display
+                        if (intentElement && intentElement.mainContentDiv) {
+                            intentElement.mainContentDiv.className = 'bubble'; // Change to bubble class
+                            intentElement.mainContentDiv.innerHTML = `Error: ${data.error}`;
+                        } else {
+                            // Fallback if intent element is not available
+                            appendMessage("agent", { type: 'text', response: `Error: ${data.error}` }, false, data.convo_id, data.is_first_actual_message);
+                        }
+
+                         // If it was the first message but backend returned an error, update title immediately with fallback
+                         if (data.is_first_actual_message && data.convo_id && data.convo_title) {
+                             console.log("First message, but backend returned error. Triggering immediate title update (likely fallback title).");
+                              updateRecentsTitle(data.convo_id, data.convo_title);
+                         } else if (data.convo_id && data.convo_title) {
+                              updateRecentsTitle(data.convo_id, data.convo_title);
+                         }
 
                     } else {
-                         console.log("This POST was to an existing conversation. Ensuring active state).");
-                         // Ensure the correct item is marked active if not a new convo created by this post
-                         const recentsList = document.getElementById('recents-list');
-                         if (recentsList && data.convo_id) {
-                              const currentConvoItem = recentsList.querySelector(`li[data-convo-id="${data.convo_id}"]`);
-                              if (currentConvoItem) {
-                                  recentsList.querySelectorAll('li').forEach(li => li.classList.remove('active'));
-                                  currentConvoItem.classList.add('active');
-                                  // Move to top (optional)
-                                  recentsList.prepend(currentConvoItem);
-                              }
+                         // Handle cases where backend returns no agent_response_data or error
+                         console.log("Backend response had no agent_response_data or error.");
+                         // If it was the first message but backend returned nothing useful, update title
+                          if (data.is_first_actual_message && data.convo_id && data.convo_title) {
+                             console.log("First message, but no agent response. Triggering immediate title update (likely fallback title).");
+                              updateRecentsTitle(data.convo_id, data.convo_title);
+                         } else if (data.convo_id && data.convo_title) {
+                              updateRecentsTitle(data.convo_id, data.convo_title);
                          }
-                         // Title update for subsequent messages is handled above based on responseType
                     }
-                   // --- END ----------------------------------------------------
-
-
-                } else if (data.error) {
-                    // Display error message if backend sends one
-                     // Remove typing indicator placeholder if it wasn't already removed
-                    if (typingMessageElementPlaceholderBubble) {
-                         const parentMessageDiv = typingMessageElementPlaceholderBubble.closest('.message');
-                         if(parentMessageDiv) parentMessageDiv.remove();
-                    }
-                    // Append error as a text message
-                    appendMessage("agent", { type: 'text', response: `Error: ${data.error}` }, false, data.convo_id, data.is_first_actual_message); // Pass backend flag
-
-                     // If it was the first message but backend returned an error, update title immediately with fallback
-                     if (data.is_first_actual_message && data.convo_id && data.convo_title) {
-                         console.log("First message, but backend returned error. Triggering immediate title update (likely fallback title).");
-                          updateRecentsTitle(data.convo_id, data.convo_title);
-                     } else if (data.convo_id && data.convo_title) {
-                          updateRecentsTitle(data.convo_id, data.convo_title);
-                     }
-
-                } else {
-                     // Handle cases where backend returns no agent_response_data or error
-                     console.log("Backend response had no agent_response_data or error.");
-                      // Remove typing indicator placeholder
-                     if (typingMessageElementPlaceholderBubble) {
-                         const parentMessageDiv = typingMessageElementPlaceholderBubble.closest('.message');
-                         if(parentMessageDiv) parentMessageDiv.remove();
-                     }
-                      // Maybe append a generic message or just remove the placeholder.
-                     // appendMessage("agent", { type: 'text', response: "Received empty response from agent." }, false);
-                     // If it was the first message but backend returned nothing useful, update title
-                      if (data.is_first_actual_message && data.convo_id && data.convo_title) {
-                         console.log("First message, but no agent response. Triggering immediate title update (likely fallback title).");
-                          updateRecentsTitle(data.convo_id, data.convo_title);
-                     } else if (data.convo_id && data.convo_title) {
-                          updateRecentsTitle(data.convo_id, data.convo_title);
-                     }
-                }
+                }, 1200); // Wait for intent confirmation to show briefly
 
 
             } catch (error) {
                 console.error("Error during fetch or processing response:", error);
-                 // Remove typing indicator placeholder
-                if (typingMessageElementPlaceholderBubble) {
-                     const parentMessageDiv = typingMessageElementPlaceholderBubble.closest('.message');
-                     if(parentMessageDiv) parentMessageDiv.remove();
+                // Reuse the intent confirmation structure for error display
+                if (intentElement && intentElement.mainContentDiv) {
+                    intentElement.mainContentDiv.className = 'bubble'; // Change to bubble class
+                    intentElement.mainContentDiv.innerHTML = `Sorry, an unexpected error occurred: ${error.message}`;
+                } else {
+                    // Fallback if intent element is not available
+                    appendMessage("agent", { type: 'text', response: `Sorry, an unexpected error occurred: ${error.message}` }, false, conversationId, false);
                 }
-                // Append a generic error message as text
-                appendMessage("agent", { type: 'text', response: `Sorry, an unexpected error occurred: ${error.message}` }, false, conversationId, false);
 
                  // If it was the first message but there was a JS error, update title with fallback if possible
                  // This requires the convo ID to be available in the initial page context or the POST body
@@ -804,64 +949,6 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
     }
-
-    // --- Initial Page Load Logic Execution ---
-     // This section handles animating the template-rendered welcome message if it exists.
-     console.log("DOMContentLoaded: Checking for initial messages to render/animate.");
-     // Re-query initial messages to ensure we get the correct elements after DOM load
-
-
-     if (initialMessagesOnLoad.length > 0) {
-         console.log(`Found ${initialMessagesOnLoad.length} initial messages.`);
-         let welcomeMessageFoundAndAnimated = false;
-
-         initialMessagesOnLoad.forEach(messageDiv => {
-             const sender = messageDiv.dataset.sender;
-             const rawText = messageDiv.dataset.raw;
-             const bubble = messageDiv.querySelector('.bubble'); // Get the bubble inside the message
-
-             if (bubble) { // Check if bubble exists
-                 // If it's the welcome message rendered by Django, animate it
-                 if (bubble.dataset.welcomeMessage === 'true') { // Check for the data attribute on the bubble
-                      console.log("Found initial welcome message (from template). Starting animation.");
-                      welcomeMessageFoundAndAnimated = true;
-                      // Use typeText for animation. Pass scrollChatToBottom as callback.
-                      // Pass the raw text for animation and final rendering
-                      typeText(bubble, rawText || bubble.innerHTML, 10, scrollChatToBottom); // Use data-raw or innerHTML as fallback
-                 } else if (sender === 'agent' && rawText !== undefined) {
-                      // Render markdown for other agent messages statically if raw text is available
-                      bubble.innerHTML = marked.parse(rawText);
-                 } else if (sender === 'user') {
-                      // Render plain text for user messages statically
-                       bubble.textContent = rawText || bubble.textContent; // Use raw or existing text
-                 }
-            } else {
-                 // Handle structured message types rendered by template on load if needed
-                 // Currently, only text messages (including welcome) are rendered by template
-                 // Add logic here if other types (like needs_connection) can be pre-rendered
-                 console.warn("Message div found without a bubble element during initial render:", messageDiv);
-                 // If no bubble but raw text exists, just add it plain for now
-                 if (rawText !== undefined) {
-                      messageDiv.textContent = rawText;
-                 }
-            }
-         });
-
-         // Ensure scroll to bottom after initial render/animation setup, but only if no welcome animation started.
-          // If welcome animation started, the callback handles the scroll.
-          if (!welcomeMessageFoundAndAnimated) {
-              scrollChatToBottom();
-          }
-
-     } else {
-        //  This else block is for when no initial messages are found *at all* from the template render.
-        //  With the current view logic, this block should ideally not be hit when `is_new_conversation_page` is true
-        //  because the view always adds a temporary welcome message in that case.
-        //  If you change the view to *not* render the temporary message, you would need JS to add it here.
-         console.log("No initial messages found from template.");
-         scrollChatToBottom(); // Scroll to ensure input is visible
-     }
-
 
     /* ======  KEEP GREY BACKGROUND ON CURRENT CONVERSATION  ====== */
     if (recentsList) {
@@ -1320,15 +1407,8 @@ $(document).ready(function() {
     // --- END Welcome Message Animation ---
 
     // --- Markdown Rendering for Messages Loaded from Database ---
-    // This should target messages that were NOT just animated (i.e., existing messages loaded from DB)
-    // Ensure this section doesn't process the welcome message if it's present in the initial HTML for some reason.
-    // The current check using [data-raw] is good if only DB messages have this.
-    chatBox.find('.agent-message .message-bubble[data-raw]').each(function() {
-       const rawText = $(this).data('raw');
-        if (rawText !== undefined) {
-            $(this).html(marked.parse(String(rawText)));
-        }
-    });
+    // This is now handled by the vanilla JS code above in the DOMContentLoaded listener
+    // No need for duplicate jQuery-based rendering
     // --- End Markdown Rendering for DB Messages ---
 
     // ... rest of your JS code (input clearing, event handlers, sendUserMessage function etc.) ...
@@ -1481,5 +1561,74 @@ $(document).ready(function() {
 // Ensure your typeWriter function (if defined outside ready) is accessible or the logic is within ready
 // Ensure sendUserMessage function is correctly defined and accessible.
 // Ensure getCookie function is defined and accessible.
+
+// Add new function to show intent confirmation modal/indicator
+function showIntentConfirmation() {
+    const chatMessagesContainer = document.getElementById("chat-box");
+    if (!chatMessagesContainer) return null;
+
+    // Create persistent agent message element that will be reused throughout the conversation flow
+    const messageDiv = document.createElement("div");
+    messageDiv.classList.add("message", "agent-message");
+    messageDiv.dataset.sender = "agent";
+    messageDiv.dataset.intentState = "confirming";
+
+    // Use the standardized avatar creation (same logic as appendMessage)
+    const avatarDiv = document.createElement("div");
+    avatarDiv.classList.add('avatar', 'agent-avatar');
+    avatarDiv.innerHTML = `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14
+                     c0 1.1.9 2 2 2h14
+                     c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM19 20H5V8h14v12z"
+                  fill="#5F6368"/>
+        </svg>`;
+    messageDiv.appendChild(avatarDiv);
+
+    // Create main content container that will be updated throughout the flow
+    const mainContentDiv = document.createElement("div");
+    mainContentDiv.classList.add("intent-confirmation-box"); // Use intent confirmation specific class
+    
+    // Create the confirmation UI with progress animation
+    mainContentDiv.innerHTML = `
+        <div class="intent-confirmation-content">
+            <div class="intent-progress-spinner"></div>
+            <div class="intent-confirmation-title processing">Confirming Intent</div>
+        </div>
+    `;
+
+    messageDiv.appendChild(mainContentDiv);
+    chatMessagesContainer.appendChild(messageDiv);
+    scrollChatToBottom();
+
+    // Return the element so we can update it later
+    return { messageDiv, mainContentDiv };
+}
+
+// Add function to update intent confirmation to show confirmed intent
+function updateIntentConfirmation(element, intent) {
+    if (!element || !element.mainContentDiv) return;
+
+    // Map intent types to display labels
+    const intentLabels = {
+        'general_chat': 'General',
+        'calendar': 'Calendar',
+        'schedule': 'Calendar',
+        'calendar_action_request': 'Calendar'
+    };
+
+    const intentLabel = intentLabels[intent] || 'General';
+    
+    element.mainContentDiv.innerHTML = `
+        <div class="intent-confirmation-content confirmed">
+            <div class="intent-confirmation-icon">✓</div>
+            <div class="intent-confirmation-title confirmed">Intent: ${intentLabel}</div>
+        </div>
+    `;
+    element.messageDiv.dataset.intentState = "confirmed";
+
+    // Keep the container visible so it can be reused for the agent response without a reload.
+}
+
 
 

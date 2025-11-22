@@ -135,10 +135,28 @@ class AIAgent:
             return 'general_chat'
 
         intent_prompt = (
-            "Classify the user's intent based on the following message. "
-            "Choose one of the following categories: 'calendar', 'general_chat'. "
-            "If the intent is unclear or doesn't fit 'calendar', default to 'general_chat'. "
-            "Reply ONLY with the category name, e.g., 'calendar' or 'general_chat'."
+            """You are a calendar assistant's intent classifier.
+
+            Analyze the user's message and classify it as EITHER:
+            - "calendar" - if the user wants to create, view, edit, delete, or manage calendar events/schedules
+            - "general_chat" - for greetings, questions about capabilities, off-topic conversation, or unclear requests
+
+            Calendar intent examples:
+            - "Schedule a meeting tomorrow at 2pm"
+            - "What's on my calendar next week?"
+            - "Cancel my 3pm appointment"
+            - "Find free time on Thursday"
+            - "Add lunch with Sarah to my calendar"
+
+            General chat examples:
+            - "Hello!" / "Hi there"
+            - "What can you do?"
+            - "How's the weather?"
+            - "Thanks!" / "That's helpful"
+
+            Reply with ONLY the single word: "calendar" or "general_chat"
+
+            User message: {user_message}"""
         )
         messages = [
              # Optional: include some conversation history for better context
@@ -171,16 +189,55 @@ class AIAgent:
             return {"action": "unknown", "params": {}, "details": "AI client not initialized."}
 
         parameter_prompt = (
-            "Extract the primary calendar action, parameters, and a brief human-readable summary from the user's message. "
-            "Identify the action (e.g., \"create_event\", \"list_events\", \"delete_event\", \"find_free_slots\", \"list_calendars\"). "
-            "Extract relevant parameters such as event \"summary\", \"start\" time/date, \"end\" time/date, \"duration\", \"attendees\" (list of emails). "
-            "Additionally, return two lists within params: \"present\" (object of any values confidently detected among summary/date/start/end/duration/attendees) and \"missing\" (array of required fields still needed). "
-            "Required fields for create_event are: a date (or explicit start date), time info (either start+end or duration), and a title/summary. Attendees are optional. "
-            "If the user gives only a date, mark start/end or duration as missing accordingly. If they give only time without date, mark date as missing. "
-            "Return a JSON object ONLY, no markdown/back-ticks, using DOUBLE quotes. "
-            "Format: {\"action\": \"action_name\", \"params\": {\"summary\": \"…\", \"start\": \"…\", \"end\": \"…\", \"duration\": …, \"attendees\": [\"…\"], \"present\": {…}, \"missing\": [ … ]}, \"details\": \"human-readable summary\"}."
-            "Example create_event: {\"action\": \"create_event\", \"params\": {\"summary\": \"Meeting with John\", \"start\": \"tomorrow 14:00\", \"end\": \"tomorrow 15:00\", \"attendees\": [\"john@example.com\"]}, \"details\": \"create a meeting with John tomorrow from 2 to 3 pm\"}."
-            "If the action or parameters are unclear or not calendar-related, use \"action\": \"unknown\"."
+            """You are a calendar parameter extractor. Extract structured data from the user's calendar request.
+
+            ACTIONS: create_event, list_events, delete_event, find_free_slots, list_calendars
+
+            REQUIRED FIELDS for create_event:
+            - summary/title (what the event is about)
+            - date (when it happens)
+            - time information: EITHER (start + end) OR duration
+
+            OPTIONAL FIELDS:
+            - attendees (list of email addresses)
+
+            RESPONSE FORMAT - Return ONLY valid JSON with double quotes, no markdown:
+            {
+            "action": "action_name",
+            "params": {
+                "summary": "event title",
+                "date": "relative or absolute date",
+                "start": "time or datetime",
+                "end": "time or datetime",
+                "duration": "minutes or 'X hours'",
+                "attendees": ["email@example.com"],
+                "present": {},
+                "missing": []
+            },
+            "details": "brief human summary of what was understood"
+            }
+
+            CRITICAL: Analyze what information IS present and what's MISSING:
+            - "present" object: Include ANY fields you detected (summary, date, start, end, duration, attendees)
+            - "missing" array: List required fields that are MISSING or UNCLEAR
+
+            Examples:
+
+            Input: "Schedule team meeting tomorrow 2-3pm"
+            Output: {{"action": "create_event", "params": {{"summary": "team meeting", "date": "tomorrow", "start": "14:00", "end": "15:00", "present": {{"summary": "team meeting", "date": "tomorrow", "start": "14:00", "end": "15:00"}}, "missing": []}}, "details": "team meeting tomorrow 2-3pm"}}
+
+            Input: "Book a dentist appointment"
+            Output: {{"action": "create_event", "params": {{"summary": "dentist appointment", "present": {{"summary": "dentist appointment"}}, "missing": ["date", "time"]}}, "details": "dentist appointment"}}
+
+            Input: "Meeting with John at 2pm"
+            Output: {{"action": "create_event", "params": {{"summary": "meeting with John", "start": "14:00", "present": {{"summary": "meeting with John", "start": "14:00"}}, "missing": ["date", "end"]}}, "details": "meeting with John at 2pm"}}
+
+            Input: "What's on my calendar tomorrow?"
+            Output: {{"action": "list_events", "params": {{"date": "tomorrow"}}, "details": "list events tomorrow"}}
+
+            If unclear or not calendar-related: {{"action": "unknown", "params": {{}}, "details": "request unclear"}}
+
+            User message: {user_message}"""
         )
         
         messages = [
@@ -267,12 +324,91 @@ class AIAgent:
             else:
                 # If connected, proceed to extract calendar parameters
                 print("Google connected. Extracting calendar parameters with context...")
+                # Get current date for AI context
+                from datetime import datetime
+                current_date = datetime.now().strftime("%Y-%m-%d")
+                current_day = datetime.now().strftime("%A")
+                
                 system = (
-                    "You are a calendar assistant. Use the dialogue context to resolve pronouns like 'that day', 'then', 'the previous time', etc. "
-                    "When the user requests a calendar task, reply with a SINGLE JSON object only – no markdown, no back-ticks. "
-                    "Use DOUBLE quotes for every key and string value. "
-                    "Format: {\"action\": \"create_event\"|\"find_free_slots\"|\"list_events\", \"params\": { … }, \"message_for_user\": \"<short sentence>\"}"
+                    f"""You are a calendar assistant. Today is {current_day}, {current_date}. Extract calendar actions from the user's CURRENT request only.
+
+                    CRITICAL RULES:
+                    1. Return EXACTLY ONE JSON object - never return multiple JSON objects
+                    2. Process only the SINGLE action the user is requesting right now
+                    3. If user mentions multiple time slots, create ONE event with the primary/main time they want
+                    4. DO NOT create multiple events from a single request
+                    5. DO NOT repeat previous actions from conversation history
+                    6. Use dialogue history ONLY to resolve contextual references (like "that day", "same time")
+                    7. ALWAYS use the current date {current_date} as reference for date calculations
+                    8. NEVER use dates from past years - all dates should be relative to {current_date}
+                    
+                    SINGLE JSON RESPONSE FORMAT:
+                    Return ONLY one JSON object, nothing else before or after it.
+                    
+                    ACTIONS: create_event, list_events, delete_event, find_free_slots, list_calendars
+                    
+                    For list_events:
+                    - Extract time range from user's request ("this week", "tomorrow", "next Monday", "this month", "this year", "month")
+                    - ALWAYS calculate dates relative to TODAY ({current_date})
+                    - Return: {{"action": "list_events", "params": {{"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"}}, "message_for_user": "..."}}
+                    
+                    CONTEXT RESOLUTION (use history to understand references):
+                    - "that day" / "the same day" / "same day" → the MOST RECENT date mentioned in conversation
+                    - "same time" / "at the same time" → the time from the last event created
+                    - "with them too" → attendees mentioned before
+                    - "for the same duration" → duration from previous context
+                    
+                    EXAMPLES:
+                    Previous: "Create meeting on Thursday at 2pm"
+                    Current: "Schedule another at 4pm on the same day"
+                    → Extract ONLY: {{"action": "create_event", "params": {{"summary": "another", "date": "Thursday", "start": "16:00"}}, ...}}
+                    
+                    Previous: "Book dentist Tuesday 9am to 10am"
+                    Current: "Add lunch same day at noon"
+                    → Extract ONLY: {{"action": "create_event", "params": {{"summary": "lunch", "date": "Tuesday", "start": "12:00"}}, ...}}
+
+                    ACTIONS: create_event, list_events, delete_event, find_free_slots, list_calendars
+
+                    For create_event, REQUIRED fields:
+                    - Event title/summary
+                    - Date (explicit or relative)
+                    - Time: EITHER (start + end times) OR duration
+
+                    RESPONSE FORMAT - Single JSON object only, no markdown, double quotes:
+                    {{
+                    "action": "create_event",
+                    "params": {{
+                        "summary": "event title",
+                        "date": "date reference",
+                        "start": "start time",
+                        "end": "end time",
+                        "duration": "duration if provided instead of end",
+                        "attendees": ["emails"],
+                        "present": {{}},
+                        "missing": []
+                    }},
+                    "message_for_user": "brief confirmation",
+                    "agent_explanation": "Complete explanation of task, missing info, and assumptions in natural language"
+                    }}
+
+                    FIELD DETECTION:
+                    - "present": Include ALL detected fields as an object
+                    - "missing": Array of required fields that are unclear or absent
+                    
+                    AGENT EXPLANATION FOR SUCCESS RESPONSES:
+                    - "agent_explanation": Generate a natural, formatted explanation that covers:
+                        * What task was performed
+                        * Any information that was missing from the user's request
+                        * Any assumptions you made to complete the task
+                    - Format as readable text with line breaks or bullets as appropriate
+                    - Only include relevant sections (don't mention missing info if nothing was missing)
+                    - Example: "Created meeting for Friday 1-2pm. Since no location was specified, I set it as a virtual meeting. Used default calendar since none was specified."
+
+                    If information is missing: {{"action": "create_event", "params": {{"present": {{detected fields}}, "missing": ["field1", "field2"]}}, "message_for_user": "clarifying question"}}
+
+                    If unclear or error: {{"action": "unknown", "params": {{}}, "message_for_user": "error explanation"}}"""
                 )
+
                 # Include brief conversation history for better parameter extraction
                 messages_history = []
                 if conversation:
@@ -284,11 +420,63 @@ class AIAgent:
                     ]
                 messages = messages_history + [{"role": "user", "content": text}]
                 raw = self._get_claude_chat_response(messages, system_prompt=system, temperature=0)
-                try:
-                    extracted_data = json.loads(raw)
-                except json.JSONDecodeError as e:
+                print(f"AI RAW RESPONSE: {raw}")
+                # Some models occasionally emit multiple JSON objects back-to-back.
+                # Extract the last valid JSON object to avoid "Extra data" errors.
+
+                def _extract_last_json(blob: str):
+                    if not blob:
+                        return None
+                    s = str(blob).strip()
+                    # Fast path: single JSON
+                    try:
+                        return json.loads(s)
+                    except Exception:
+                        pass
+                    # Fallback: scan for top-level {...} blocks
+                    objs = []
+                    depth = 0
+                    start = None
+                    for idx, ch in enumerate(s):
+                        if ch == '{':
+                            if depth == 0:
+                                start = idx
+                            depth += 1
+                        elif ch == '}':
+                            if depth > 0:
+                                depth -= 1
+                                if depth == 0 and start is not None:
+                                    candidate = s[start:idx+1]
+                                    try:
+                                        obj = json.loads(candidate)
+                                        objs.append(obj)
+                                    except Exception:
+                                        pass
+                                    start = None
+                    
+                    # Handle multiple JSON objects intelligently
+                    if len(objs) > 1:
+                        print(f"⚠️ WARNING: AI returned {len(objs)} JSON objects instead of 1. Selecting the best valid action.")
+                        for i, obj in enumerate(objs):
+                            action = obj.get('action', 'unknown')
+                            print(f"   Object {i+1}: action={action}")
+                        
+                        # Prefer the first valid create_event/list_events action over 'unknown' actions
+                        valid_actions = ['create_event', 'list_events', 'delete_event', 'find_free_slots']
+                        for obj in objs:
+                            if obj.get('action') in valid_actions:
+                                print(f"   Selected: {obj.get('action')} (first valid action)")
+                                return obj
+                        
+                        # If no valid actions found, take the last one as fallback
+                        print(f"   No valid actions found, using last object: {objs[-1].get('action')}")
+                        return objs[-1]
+    
+                    return objs[-1] if objs else None
+
+                extracted_data = _extract_last_json(raw)
+                if not isinstance(extracted_data, dict):
                     print(f"Failed to parse AI response as JSON: {raw}")
-                    print(f"JSON decode error: {e}")
                     fallback = self.summarize_user_fields(text)
                     clarification = self.build_missing_fields_message(
                         fallback.get('present', {}),
@@ -296,9 +484,32 @@ class AIAgent:
                         ""
                     )
                     return { 'type': 'text', 'response': clarification }
+                
                 action = extracted_data.get('action')
+                
+                # Validate that the action matches the user's intent
+                # Use precise patterns to catch genuine list/view requests without false positives
+                import re
+                create_vs_list_patterns = [
+                    r'\bwhat.*(?:events?|meetings?|scheduled?)\b',     # "what events do I have"
+                    r'\bshow.*(?:events?|calendar|schedule)\b',        # "show my calendar"  
+                    r'\blist.*(?:events?|meetings?)\b',                # "list events"
+                    r'\bcheck.*(?:calendar|schedule)\b',               # "check my schedule"
+                    r'\b(?:what\'s|whats).*(?:on|in).*(?:calendar|schedule)\b',  # "what's on my calendar"
+                ]
+                
+                # Only override if it clearly matches a list/view pattern AND doesn't have create keywords
+                has_list_intent = any(re.search(pattern, text.lower()) for pattern in create_vs_list_patterns)
+                has_create_keywords = re.search(r'\b(?:create|schedule|book|add|make|set up|arrange)\b', text.lower())
+                
+                if action == 'create_event' and has_list_intent and not has_create_keywords:
+                    print(f"⚠️ WARNING: AI returned 'create_event' but user message appears to be a list/view request. Correcting to 'list_events'")
+                    action = 'list_events'
+                    extracted_data['action'] = 'list_events'
+
                 params = extracted_data.get('params', {})
-                details = extracted_data.get('details', '')
+                # Some prompts may return message_for_user instead of details
+                details = extracted_data.get('details') or extracted_data.get('message_for_user') or ''
                 error = extracted_data.get('error')
 
                 if error:
@@ -319,13 +530,17 @@ class AIAgent:
                 # If parameters are extracted and no clarification is needed,
                 # return a structured response indicating the *intended* calendar action
                 # The view (chat_process) will then perform the action.
-                print(f"Parameters extracted successfully. Signalling view to perform action: {action} with params: {params}")
+                # Avoid logging raw params because upstream models sometimes emit stale absolute
+                # datetimes (e.g., year 2023 or wrong hours). The view will normalize date/time
+                # using the user's message and timezone, so this log would be misleading.
+                print(f"Parameters extracted successfully. Signalling view to perform action: {action}.")
                 return {
                     'type': 'calendar_action_request', # New type to signal the view
                     'content': {
                         'action': action,
                         'params': params,
-                        'details': details # Keep the human-readable details
+                        'details': details, # Keep the human-readable details
+                        'agent_explanation': extracted_data.get('agent_explanation', '')
                     }
                 }
 
@@ -333,32 +548,61 @@ class AIAgent:
             print("General chat intent detected. Using Claude.")
             try:
                 system = (
-                    "You are a friendly and knowledgeable calendar assistant. "
-                    "While your primary focus is on calendar management, you can also engage in general conversation. "
-                    "Always maintain a helpful, professional tone and be ready to assist with calendar-related tasks. "
-                    "For general chat, keep responses concise and relevant to the context of calendar and scheduling assistance."
-                    "\n\n"
-                    "When you output a list of capabilities, follow these rules exactly:\n"
-                    "  1. Use an ordered list (1., 2., 3., …).\n"
-                    "  2. On each numbered line, put the **Capability name:** and its short description on the **same line**.\n"
-                    "     Then end that line with two spaces (to force a Markdown line-break).\n"
-                    "  3. On the very next line (indented by four spaces), write Example: and its text.\n"
-                    "  4. Only use bullets (• or ●) if you really need a second-level list under an example.\n"
-                    "After all your explanation, examples and points, leave a line before "
-                    "giving your closing statement or remark.\n\n"
-                    "Respond in at most four short sentences."
+                    """You are a friendly calendar assistant. Your primary role is managing calendars, but you can engage in brief, relevant conversation.
+
+                    CRITICAL RULES:
+                    - DO NOT repeat information you've already provided in this conversation
+                    - Give fresh, direct answers to each question
+                    - If asked the same question twice, acknowledge briefly and offer something new
+                    - Complete your thoughts fully - don't cut off mid-sentence
+
+                    PERSONALITY:
+                    - Helpful and professional
+                    - Concise (respond in 2-4 short sentences maximum)
+                    - Calendar-focused but conversational
+                    - Proactive in offering calendar help when relevant
+
+                    CAPABILITIES to mention when asked (only if not recently covered):
+                    1. **Create events** - Schedule meetings, appointments, reminders  
+                        Example: "Schedule team sync tomorrow at 2pm"
+
+                    2. **View calendar** - Check what's scheduled for any day/week  
+                        Example: "What's on my calendar Thursday?"
+
+                    3. **Find free time** - Locate available slots for scheduling  
+                        Example: "When am I free next week?"
+
+                    4. **Manage events** - Edit or cancel existing appointments  
+                        Example: "Cancel my 3pm meeting"
+
+                    5. **Multi-calendar support** - Work across your Google calendars  
+                        Example: "Add to my work calendar"
+
+                    When listing capabilities, use the format shown above with numbered items, bold capability names, descriptions on the same line ending with two spaces, and examples indented on the next line.
+
+                    Keep responses warm but brief. Redirect off-topic conversations gently toward calendar assistance."""
                 )
                 
                 messages_history = []
                 if conversation:
-                    # Fetch recent messages (e.g., last 10) for context, excluding empty ones
-                    history_messages = conversation.messages.filter(text__isnull=False, text__gt='').order_by('-timestamp')[:10]
-                    history_messages = list(history_messages)[::-1] # Reverse to get chronological order
-                    messages_history = [
-                        {"role": "user" if m.sender == "user" else "assistant", "content": m.text}
-                        for m in history_messages if m.text and m.text.strip() # Double check text is not empty
-                    ]
-                    print(f"Including {len(messages_history)} history messages in general chat prompt.")
+                    # Fetch recent messages (limited to 4 for context, excluding empty ones)
+                    history_messages = conversation.messages.filter(text__isnull=False, text__gt='').order_by('-timestamp')[:4]
+                    history_messages = list(history_messages)[::-1]  # Reverse to get chronological order
+                    
+                    # Add deduplication and filtering logic
+                    seen_content = set()
+                    for m in history_messages:
+                        if m.text and m.text.strip():
+                            # Skip if we've seen very similar content (first 50 chars)
+                            content_key = m.text.strip()[:50].lower()
+                            if content_key not in seen_content:
+                                seen_content.add(content_key)
+                                messages_history.append({
+                                    "role": "user" if m.sender == "user" else "assistant", 
+                                    "content": m.text.strip()
+                                })
+                    
+                    print(f"Including {len(messages_history)} unique history messages in general chat prompt.")
 
                 # Add the current user message
                 messages_history.append({"role": "user", "content": text})
@@ -367,7 +611,7 @@ class AIAgent:
                 content = self._get_claude_chat_response(
                     messages_history,
                     system_prompt=system,
-                    max_tokens=200,      # soft budget
+                    max_tokens=400,      # increased budget for complete responses
                 )
 
                 if content is None:
@@ -376,11 +620,22 @@ class AIAgent:
                         'response': "Sorry, I couldn't get a response from the AI for general chat."
                      }
 
-                print("Generated general chat response.")
-                return {
-                    'type': 'text',
-                    'response': content
-                }
+                # Validate response completeness
+                if content and len(content.strip()) > 0:
+                    # Check if response seems incomplete (ends mid-sentence)
+                    if content.rstrip().endswith(('...', ',', 'and', 'or', 'but', 'because', 'so', 'that', 'which', 'who')):
+                        print(f"Warning: Response may be incomplete: '{content[-20:]}'")
+                    
+                    print("Generated general chat response.")
+                    return {
+                        'type': 'text',
+                        'response': content.strip()
+                    }
+                else:
+                    return {
+                        'type': 'text',
+                        'response': "Sorry, I couldn't generate a proper response. Please try rephrasing your question."
+                    }
             except Exception as e:
                 print(f"Error in general chat handling: {e}")
                 traceback.print_exc()
@@ -407,7 +662,7 @@ class AIAgent:
             model       = self.general_chat_model,
             messages    = messages,
             temperature = temperature,
-            max_tokens  = min(max_tokens, 250),   # hard cap ≈ 1-2 short paragraphs
+            max_tokens  = min(max_tokens, 800),   # increased cap for complete responses
         )
         if system_prompt:            # only include when non-empty
             params["system"] = system_prompt
@@ -420,12 +675,40 @@ class AIAgent:
         if not self.claude_client:
             return {"present": {}, "missing": ["date", "time", "summary"]}
         system = (
-            "You extract calendar info for creating an event. "
-            "Reply ONLY JSON with keys 'present' and 'missing'. "
-            "present is an object possibly containing: summary, date, start, end, duration, attendees (array). "
-            "missing is an array of required fields still needed for creating the event. "
-            "Required: a date, time info (start+end or duration), and a summary/title. Attendees optional."
+            """Extract calendar event information for validation.
+
+            Analyze the user's message and return ONLY JSON with two keys:
+
+            {
+            "present": {object with any detected fields},
+            "missing": [array of missing required fields]
+            }
+
+            DETECTED FIELDS (include in "present" if found):
+            - "summary": event title/subject
+            - "date": any date reference (relative or absolute)
+            - "start": start time
+            - "end": end time
+            - "duration": event length
+            - "attendees": array of email addresses
+
+            REQUIRED FIELDS (include in "missing" if absent):
+            - A date (relative like "tomorrow" or absolute)
+            - Time information: EITHER (start + end) OR duration
+            - A summary/title
+
+            Examples:
+
+            Input: "Lunch tomorrow"
+            Output: {{"present": {{"summary": "lunch", "date": "tomorrow"}}, "missing": ["time"]}}
+
+            Input: "2pm to 3pm meeting with John"
+            Output: {{"present": {{"start": "14:00", "end": "15:00", "summary": "meeting with John"}}, "missing": ["date"]}}
+
+            Input: "Schedule something"
+            Output: {{"present": {{}}, "missing": ["summary", "date", "time"]}}"""
         )
+        
         messages = [{"role": "user", "content": text}]
         raw = self._get_claude_chat_response(messages, system_prompt=system, temperature=0)
         try:
