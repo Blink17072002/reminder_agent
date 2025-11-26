@@ -129,11 +129,25 @@ def assistant(request, convo_id=None, is_placeholder=False):
         raise Http404("POST requests to /agent/assistant/ are not allowed. Use /agent/chat/process/.")
 
 
+    # Prepare messages for rendering - serialize JSON content for JavaScript
+    messages_with_json = []
+    for msg in messages_to_render:
+        msg_dict = {
+            'id': msg.id,
+            'sender': msg.sender,
+            'text': msg.text,
+            'message_type': msg.message_type,
+            'content': msg.content,
+            'content_json': json.dumps(msg.content) if msg.content else None,
+            'timestamp': msg.timestamp,
+        }
+        messages_with_json.append(msg_dict)
+
     # Prepare the context data to pass to the template
     context = {
         "conversations": conversations, # List of all recent conversations
         "current_convo": convo, # The currently selected conversation object (or None)
-        "messages": messages_to_render, # Messages for the current_convo (or empty list)
+        "messages": messages_with_json, # Messages for the current_convo (or empty list)
         "is_new_conversation_page": is_new_conversation_page, # Flag for frontend animation
         # Pass welcome message text only when the flag is True
         "welcome_message_text": welcome_message_for_frontend if is_new_conversation_page else None,
@@ -141,8 +155,9 @@ def assistant(request, convo_id=None, is_placeholder=False):
         "google_calendar_icon_url": os.path.join(settings.STATIC_URL, 'home_page/images/google_calendar_icon.svg') # Assuming this is needed
     }
 
-    print(f"Rendering assistant.html with is_new_conversation_page={is_new_conversation_page}, {len(messages_to_render)} messages, current_convo={convo.id if convo else 'None'}.")
+    print(f"Rendering assistant.html with is_new_conversation_page={is_new_conversation_page}, {len(messages_with_json)} messages, current_convo={convo.id if convo else 'None'}.")
     return render(request, "home_page/assistant.html", context)
+
 
 
 
@@ -163,8 +178,9 @@ def chat_process(request):
         convo_id = data.get("convo_id") # Get convo_id from JSON data
         # Client-reported IANA timezone (e.g., "Europe/London")
         client_tz_name = data.get("client_tz")
+        confirmation_data = data.get("confirmation_data")
 
-        if not user_input:
+        if not user_input and not confirmation_data:
              # Handle empty message appropriately, maybe return existing messages or an error
              return JsonResponse({'error': 'Empty message received'}, status=400)
 
@@ -189,26 +205,138 @@ def chat_process(request):
 
         # Now, message history logic needs the actual convo object
         is_first_actual_message = convo.messages.count() == 0 if convo else True # Check count if convo exists
-        user_message = Message.objects.create(
-            conversation=convo,
-            sender='user',
-            text=user_input,
-            message_type='text',
-            content=None,
-        )
+        
+        if user_input:
+            user_message = Message.objects.create(
+                conversation=convo,
+                sender='user',
+                text=user_input,
+                message_type='text',
+                content=None,
+            )
 
         # Get agent response using AIAgent
         # Pass the convo object to the AIAgent handle method
         ai_agent = AIAgent(user)
 
-        # Determine intent BEFORE processing (for UI display)
-        intent = ai_agent.determine_intent(user_input)
+        # Check for confirmation_data to bypass AI and create event directly
+        # confirmation_data is already extracted above
+        if confirmation_data:
+            print(f"Confirmation data received: {confirmation_data}")
+            if not AIAgent(request.user).is_google_connected():
+                 return JsonResponse({
+                     'type': 'needs_connection',
+                     'response': 'Please connect your Google account to confirm this event.',
+                     'content': {
+                         'content_url': reverse('home_page:connect_google') + f"?next={reverse('home_page:assistant', args=[convo.id])}",
+                         'email': request.user.email
+                     }
+                 })
+            
+            try:
+                gcal = GoogleCalendarService(request.user)
+                # Sanitize the event body to remove extra fields like 'conflicts' or 'agent_message'
+                event_body = {
+                    'summary': confirmation_data.get('summary'),
+                    'start': confirmation_data.get('start'),
+                    'end': confirmation_data.get('end'),
+                    'attendees': confirmation_data.get('attendees', []),
+                }
+                # Add description or location if they exist in confirmation_data
+                if 'description' in confirmation_data:
+                    event_body['description'] = confirmation_data['description']
+                if 'location' in confirmation_data:
+                    event_body['location'] = confirmation_data['location']
+
+                ev = gcal.create_event('primary', event_body)
+                
+                # Parse start/end for the success message
+                start_dt_iso = confirmation_data['start']['dateTime']
+                end_dt_iso = confirmation_data['end']['dateTime']
+                summary = confirmation_data.get('summary', 'Event')
+                
+                # Get user's timezone
+                try:
+                    from zoneinfo import ZoneInfo
+                    user_tz = ZoneInfo(client_tz_name or getattr(settings, 'TIME_ZONE', 'UTC') or 'UTC')
+                except Exception:
+                    from django.utils.timezone import get_current_timezone
+                    user_tz = get_current_timezone()
+                
+                # Helper to format for display (convert from UTC to user's timezone)
+                def _fmt_time_iso(iso_str):
+                    try:
+                        # Parse as UTC datetime
+                        dt_utc = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+                        # Convert to user's timezone
+                        dt_local = dt_utc.astimezone(user_tz)
+                        t = dt_local.strftime('%I:%M %p')
+                        return t.lstrip('0').replace('AM', 'am').replace('PM', 'pm')
+                    except: return iso_str
+                
+                def _fmt_date_iso(iso_str):
+                    try:
+                        # Parse as UTC datetime
+                        dt_utc = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+                        # Convert to user's timezone
+                        dt_local = dt_utc.astimezone(user_tz)
+                        return dt_local.strftime('%A, %B %d')
+                    except: return iso_str
+
+                agent_response_text = (
+                    f"I created '{summary}' on "
+                    f"{_fmt_date_iso(start_dt_iso)} from {_fmt_time_iso(start_dt_iso)} to {_fmt_time_iso(end_dt_iso)}."
+                )
+                
+                # Persist the success message as structured event card
+                event_success_content = {
+                    'event_title': summary,
+                    'event_link': ev.get('htmlLink'),
+                    'event_id': ev.get('id'),
+                }
+                
+                Message.objects.create(
+                    conversation=convo,
+                    sender='agent',
+                    text=agent_response_text,
+                    message_type='event_success',
+                    content=event_success_content,
+                )
+
+                return JsonResponse({
+                    'type': 'event_success',
+                    'response': agent_response_text,
+                    'content': event_success_content,
+                    'intent': 'calendar',
+                    'convo_id': str(convo.id),
+                    'convo_title': convo.title,
+                    'user_message_text': user_input,
+                    'is_first_actual_message': is_first_actual_message,
+                })
+
+            except Exception as e:
+                print(f"Error creating confirmed event: {e}")
+                error_msg = f"Sorry, I failed to create the event: {e}"
+                Message.objects.create(
+                    conversation=convo,
+                    sender='agent',
+                    text=error_msg,
+                    message_type='text'
+                )
+                return JsonResponse({
+                    'type': 'text',
+                    'response': error_msg,
+                    'content': {},
+                    'intent': 'calendar',
+                    'convo_id': str(convo.id)
+                })
 
         result = ai_agent.handle(user_input, conversation=convo)
 
         agent_response_text = result.get("response") # Assuming 'response' key for text
         response_type = result.get("type", "text") # Get the type, default to text
         response_content = result.get("content", {}) # Get content for calendar actions
+        intent = result.get("intent", "general") # Extract intent from result, default to general
         if response_type == 'needs_connection':
             next_url = reverse('home_page:assistant', args=[convo.id])
             connect_url = reverse('home_page:connect_google') + f'?next={next_url}'
@@ -759,89 +887,44 @@ def chat_process(request):
                                 {'email': a} for a in attendees if isinstance(a, str) and '@' in a
                             ]
 
+                        # INTERCEPT: Do not create event yet. Check for conflicts and return confirmation request.
+                        
+                        # Check for conflicts
+                        busy_ranges = []
                         try:
-                            ev = gcal.create_event('primary', event_body)
-                        except Exception as e:
-                            # If Google complains about an empty/invalid time range, try
-                            # adding a default 60-minute duration and retry once.
-                            minutes = parse_duration(duration) if duration else 60
-                            if minutes is None:
-                                minutes = 60
-                            if end_dt <= start_dt:
-                                end_dt = start_dt + timedelta(minutes=minutes)
-                                event_body['end']['dateTime'] = end_dt.isoformat()
-                                ev = gcal.create_event('primary', event_body)
-                            else:
-                                raise
-                        try:
-                            logger.info(
-                                "Calendar event created: %s → %s (title=%s, tz=%s)",
-                                event_body['start'].get('dateTime'),
-                                event_body['end'].get('dateTime'),
-                                summary,
-                                tz_str,
+                            busy_ranges = gcal.find_free_slots(
+                                start_date=start_dt.isoformat(),
+                                end_date=end_dt.isoformat(),
+                                attendees=attendees
                             )
-                        except Exception:
-                            pass
-                        response_type         = 'event_success'
-                        agent_response_text   = ''  # No text needed for structured response
-                        # Build a human explanation based on the final, resolved datetimes we actually used
-                        def _fmt_time(dt_obj):
-                            # 12-hour time without leading zero, lowercase am/pm
-                            t = dt_obj.strftime('%I:%M %p')
-                            return t.lstrip('0').replace('AM', 'am').replace('PM', 'pm')
-                        def _fmt_date(dt_obj):
-                            # Example: Friday Nov 14
-                            return dt_obj.strftime('%A %b %d')
-                        agent_explanation_text = (
-                            f"I created a meeting for the '{summary}' event on "
-                            f"{_fmt_date(start_dt)} from {_fmt_time(start_dt)} to {_fmt_time(end_dt)}."
+                        except Exception as e:
+                            print(f"Warning: Failed to check conflicts: {e}")
+                        
+                        has_conflict = bool(busy_ranges)
+                        conflict_msg = "You are free at this time." if not has_conflict else "⚠️ You have a conflict at this time."
+                        
+                        response_type = 'event_confirmation_request'
+                        response_content = {
+                            'summary': summary,
+                            'start': event_body['start'],
+                            'end': event_body['end'],
+                            'attendees': event_body.get('attendees', []),
+                            'conflicts': has_conflict,
+                            'agent_message': f"I've drafted this meeting. {conflict_msg}"
+                        }
+                        
+                        agent_response_text = response_content['agent_message']
+                        
+                        # Persist the draft event preview as structured message
+                        Message.objects.create(
+                            conversation=convo,
+                            sender='agent',
+                            text=agent_response_text,
+                            message_type='event_preview',
+                            content=response_content,
                         )
 
-                        def safe_get_email(gcal, fallback):
-                            try:
-                                return gcal.service.http.credentials.id_token.get('email')
-                            except (AttributeError, KeyError):
-                                return fallback
-                        # Build success payload using the actual created event times
-                        success_content_for_response = {
-                            'event_title':     summary,
-                            'connected_email': safe_get_email(gcal, request.user.email),
-                            'event_link':      ev.get('htmlLink'),
-                            'event_id':        ev.get('id'),
-                            'created_start':   (ev.get('start') or {}).get('dateTime') or (ev.get('start') or {}).get('date'),
-                            'created_end':     (ev.get('end')   or {}).get('dateTime') or (ev.get('end')   or {}).get('date'),
-                            # Include the human explanation in the JSON response so the frontend
-                            # can render a separate text bubble immediately after the card.
-                            'agent_explanation': agent_explanation_text,
-                        }
-                        # Reflect success content outward (with explanation for immediate text bubble)
-                        response_content = success_content_for_response
-                        # Persist the structured success card WITHOUT the explanation text
-                        success_content_for_persist = dict(success_content_for_response)
-                        success_content_for_persist.pop('agent_explanation', None)
-                        try:
-                            Message.objects.create(
-                                conversation=convo,
-                                sender='agent',
-                                text='',
-                                message_type='event_success',
-                                content=success_content_for_persist,
-                            )
-                        except Exception:
-                            pass
-                        # Persist the explanation as a separate agent text message so it appears after the card on reloads
-                        try:
-                            if agent_explanation_text:
-                                Message.objects.create(
-                                    conversation=convo,
-                                    sender='agent',
-                                    text=agent_explanation_text,
-                                    message_type='text',
-                                    content=None,
-                                )
-                        except Exception:
-                            pass
+
 
                 elif action == 'list_events':
                     # List events within a date range. Support simple synonyms and NL dates.

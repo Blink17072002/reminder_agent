@@ -77,16 +77,14 @@ class GoogleCalendarService: # helper class to encapsulate Calendar API calls pe
         """
         Returns Google Calendar free/busy data between start_date and end_date.
         • start_date / end_date   ISO date-strings or “YYYY-MM-DD”.
-        • duration                desired meeting length in minutes (currently unused but kept for future slot-generation).
-        • attendees               list of calendar IDs; defaults to the user’s primary calendar only.
         """
         if attendees is None:
             attendees = ["primary"]
 
-        # Ensure RFC3339 format with trailing Z
-        if not start_date.endswith("Z"):
+        # Ensure RFC3339 format. If it's just a date (YYYY-MM-DD), append time.
+        if len(start_date) == 10:
             start_date = start_date + "T00:00:00Z"
-        if not end_date.endswith("Z"):
+        if len(end_date) == 10:
             end_date = end_date + "T23:59:59Z"
 
         body = {

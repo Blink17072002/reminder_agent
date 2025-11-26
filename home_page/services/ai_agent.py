@@ -477,6 +477,11 @@ class AIAgent:
                 extracted_data = _extract_last_json(raw)
                 if not isinstance(extracted_data, dict):
                     print(f"Failed to parse AI response as JSON: {raw}")
+                    # FIX: If the response is a plain text string (e.g. a refusal), return it as text
+                    # instead of trying to parse it as a calendar action.
+                    if isinstance(raw, str) and raw.strip() and not raw.strip().startswith('{'):
+                         return {'type': 'text', 'response': raw.strip()}
+
                     fallback = self.summarize_user_fields(text)
                     clarification = self.build_missing_fields_message(
                         fallback.get('present', {}),

@@ -14,6 +14,23 @@ marked.setOptions({
 const googleCalendarIconUrl = document.body.dataset.googleCalendarIconUrl; // Assuming data-google-calendar-icon-url on body
 const googleConnectUrl = document.body.dataset.googleConnectUrl || '/accounts/google/login/'; // Assuming data-google-connect-url on body, fallback
 
+// Initialize persisted event cards on page load
+(function initializePersistedEventCards() {
+    // Find all event preview card containers
+    const previewContainers = document.querySelectorAll('.event-preview-card-container');
+    previewContainers.forEach(container => {
+        try {
+            const eventContent = JSON.parse(container.dataset.eventContent);
+            const convoId = container.dataset.convoId;
+            if (eventContent && convoId) {
+                renderEventPreview(container, eventContent, convoId);
+            }
+        } catch (e) {
+            console.error('Failed to parse event preview content:', e);
+        }
+    });
+})();
+
 
 // --- Sidebar Toggle ---
 document.querySelectorAll('.sidebar-toggle-btn').forEach(btn => {
@@ -32,20 +49,20 @@ if (textarea) { // Check if textarea exists
             textarea.style.height = '35px'; // Reset to initial minimum height
         }
     });
-     textarea.addEventListener("keydown", (e) => { // Use keydown for better control
+    textarea.addEventListener("keydown", (e) => { // Use keydown for better control
         // Check if Enter key is pressed without Shift
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault(); // Prevent newline
-             const form = document.getElementById("chat-form");
-             if (form) {
-                 // Use requestSubmit() if available for cleaner form submission trigger
-                 // Otherwise, fall back to dispatching submit event (which is caught below)
-                 if (typeof form.requestSubmit === 'function') {
-                     form.requestSubmit();
-                 } else {
-                     form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true })); // Trigger form submit
-                 }
-             }
+            const form = document.getElementById("chat-form");
+            if (form) {
+                // Use requestSubmit() if available for cleaner form submission trigger
+                // Otherwise, fall back to dispatching submit event (which is caught below)
+                if (typeof form.requestSubmit === 'function') {
+                    form.requestSubmit();
+                } else {
+                    form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true })); // Trigger form submit
+                }
+            }
         }
     });
 }
@@ -76,13 +93,13 @@ function scrollChatToBottom() {
 // Function to remove the welcome message (static or animating) - Kept as it's used when sending the first message
 function removeWelcomeMessage() {
     const chatMessagesContainer = document.getElementById("chat-box");
-     if (!chatMessagesContainer) return;
+    if (!chatMessagesContainer) return;
     // Select the bubble with the data attribute and find its parent message
     const welcomeMessageBubble = chatMessagesContainer.querySelector('.message .bubble[data-welcome-message="true"]');
     if (welcomeMessageBubble) {
         const messageDiv = welcomeMessageBubble.closest('.message');
         if (messageDiv) {
-             messageDiv.remove();
+            messageDiv.remove();
             console.log("Removed template-rendered welcome message.");
         }
     }
@@ -113,21 +130,21 @@ function typeText(element, rawText, speed = 3, callback = null) {
     element.classList.add('typing-in-progress');
 
     function nextChar() {
-         // Re-check if element is still in DOM during recursion
-         if (!document.body.contains(element)) {
-             console.warn("Element removed from DOM during typing animation. Aborting.");
-             if (callback) {
-                 callback();
-             }
-             return;
-         }
+        // Re-check if element is still in DOM during recursion
+        if (!document.body.contains(element)) {
+            console.warn("Element removed from DOM during typing animation. Aborting.");
+            if (callback) {
+                callback();
+            }
+            return;
+        }
 
         if (i < textStr.length) {
             // Use requestAnimationFrame for smoother rendering
             requestAnimationFrame(() => {
-                 element.textContent = textStr.substring(0, i + 1);
-                 i++;
-                 setTimeout(nextChar, speed);
+                element.textContent = textStr.substring(0, i + 1);
+                i++;
+                setTimeout(nextChar, speed);
             });
         } else {
             // Once typing is done, remove typing class and parse markdown
@@ -138,7 +155,7 @@ function typeText(element, rawText, speed = 3, callback = null) {
             if (callback) {
                 callback();
             }
-             console.log("Typing animation finished.");
+            console.log("Typing animation finished.");
         }
     }
     nextChar(); // Start the animation
@@ -148,11 +165,11 @@ function typeText(element, rawText, speed = 3, callback = null) {
 function escapeHtml(unsafe) {
     if (!unsafe) return '';
     return unsafe
-         .replace(/&/g, "&amp;")
-         .replace(/</g, "&lt;")
-         .replace(/>/g, "&gt;")
-         .replace(/"/g, "&quot;")
-         .replace(/'/g, "&#039;");
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 }
 
 
@@ -180,7 +197,7 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
         messageDiv = placeholderElement.closest('.message');
         if (!messageDiv) {
             console.error("Placeholder element found, but its parent message div is missing!");
-             // Fallback to creating a new message div if parent not found
+            // Fallback to creating a new message div if parent not found
             messageDiv = document.createElement("div");
             messageDiv.classList.add("message", sender + "-message");
         }
@@ -188,7 +205,7 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
         contentContainer = placeholderElement;
 
     } else {
-         // Create a new message div if no placeholder
+        // Create a new message div if no placeholder
         messageDiv = document.createElement("div");
         messageDiv.classList.add("message", sender + "-message");
 
@@ -196,7 +213,7 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
         contentContainer = document.createElement("div");
         // Add bubble class only for text responses initially
         if (responseType === 'text') {
-           contentContainer.classList.add("bubble");
+            contentContainer.classList.add("bubble");
         }
     }
 
@@ -204,13 +221,13 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
     // Set data attributes on the message div
     messageDiv.dataset.sender = sender;
     if (convoId) {
-         messageDiv.dataset.convoId = convoId;
+        messageDiv.dataset.convoId = convoId;
     }
     if (isFirstActualMessage) {
-         messageDiv.dataset.isFirstActualMessage = 'true';
+        messageDiv.dataset.isFirstActualMessage = 'true';
     }
 
-     // Give an avatar to user messages AND to all agent messages, but avoid duplicates
+    // Give an avatar to user messages AND to all agent messages, but avoid duplicates
     if (sender === 'user' || sender === 'agent') {
         // Check if avatar already exists to avoid duplicates
         avatarDiv = messageDiv.querySelector('.avatar');
@@ -240,12 +257,12 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
     // Handle content based on response type and typing status
     if (isTyping && responseType === 'text') {
         // If creating a new typing message, add the typing indicator HTML
-         if (!placeholderElement) {
-             contentContainer.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
-             messageDiv.classList.add("typing-message");
-             messageDiv.appendChild(contentContainer); // Append content container if new
-             chatMessagesContainer.appendChild(messageDiv); // Append message div if new
-         }
+        if (!placeholderElement) {
+            contentContainer.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+            messageDiv.classList.add("typing-message");
+            messageDiv.appendChild(contentContainer); // Append content container if new
+            chatMessagesContainer.appendChild(messageDiv); // Append message div if new
+        }
         // If placeholder exists, it already has the typing indicator
         return contentContainer; // Return the content container (bubble) for typeText
 
@@ -275,62 +292,10 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
             }
 
         } else if (responseType === 'event_success') {
-            // Remove bubble class for structured content
-            contentContainer.classList.remove("bubble");
-            const eventTitle = responseContent?.event_title || 'Your Event';
-            const connectedEmail = responseContent?.connected_email || '';
-            const eventLink = responseContent?.event_link || '';
-            const createdStart = responseContent?.created_start || '';
-            const createdEnd = responseContent?.created_end || '';
+            renderEventSuccess(contentContainer, responseData);
 
-            const formatWhen = (startIso, endIso) => {
-              try {
-                if (!startIso && !endIso) return '';
-                const s = startIso ? new Date(startIso) : null;
-                const e = endIso ? new Date(endIso) : null;
-                const optsDate = { year: 'numeric', month: 'short', day: 'numeric' };
-                const optsTime = { hour: 'numeric', minute: '2-digit' };
-                if (s && e) {
-                  const sameDay = s.toDateString() === e.toDateString();
-                  if (sameDay) {
-                    return `${s.toLocaleDateString(undefined, optsDate)} • ${s.toLocaleTimeString(undefined, optsTime)} – ${e.toLocaleTimeString(undefined, optsTime)}`;
-                  }
-                  return `${s.toLocaleString(undefined, { ...optsDate, ...optsTime })} → ${e.toLocaleString(undefined, { ...optsDate, ...optsTime })}`;
-                }
-                if (s) return s.toLocaleString(undefined, { ...optsDate, ...optsTime });
-                if (e) return e.toLocaleString(undefined, { ...optsDate, ...optsTime });
-                return '';
-              } catch (err) {
-                return '';
-              }
-            };
-            const whenText = formatWhen(createdStart, createdEnd);
-            // Use the globally available googleCalendarIconUrl variable
-            const agentExplanationText = responseData.content?.agent_explanation || '';
-            
-            const eventSuccessHtml = `
-                 <div class="create-event-box">
-                    <div class="create-event-icon">
-                       ${googleCalendarIconUrl ? `<img src="${googleCalendarIconUrl}" alt="Google Calendar" width="24" height="24">` : ''}
-                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                         <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z" fill="#34A853"/>
-                       </svg>
-                    </div>
-                    <div class="create-event-details">
-                       <div class="create-event-title">${escapeHtml(eventTitle)}</div>
-                       <div class="create-event-subtitle success">Event created successfully</div>
-                     </div>
-                 </div>
-              `;
-            contentContainer.innerHTML = eventSuccessHtml;
-            // Append a typed agent text bubble within the same message (avoid duplicate avatar)
-            if (agentExplanationText) {
-                const explainBubble = document.createElement('div');
-                explainBubble.classList.add('bubble');
-                // Append inside the structured content container so it appears below the card
-                contentContainer.appendChild(explainBubble);
-                typeText(explainBubble, agentExplanationText, 3, scrollChatToBottom);
-            }
+        } else if (responseType === 'event_confirmation_request') {
+            renderEventPreview(contentContainer, responseContent, convoId);
 
         } else if (responseType === 'needs_connection') {
             // Keep the bubble styling so it aligns with the agent avatar
@@ -382,13 +347,13 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
 
         // Append messageDiv and contentContainer if they are new
         if (!placeholderElement) {
-             // Avatar prepended earlier if needed
-             messageDiv.appendChild(contentContainer);
-             chatMessagesContainer.appendChild(messageDiv);
+            // Avatar prepended earlier if needed
+            messageDiv.appendChild(contentContainer);
+            chatMessagesContainer.appendChild(messageDiv);
         }
 
-         // Scroll to bottom after appending/updating
-         scrollChatToBottom();
+        // Scroll to bottom after appending/updating
+        scrollChatToBottom();
 
         return null; // Return null for non-typing messages
     }
@@ -396,7 +361,7 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
 
 
 // Show "create event loader and connect google account when user requests a calendar related task"
-function showCreateEventProgressThenSuccess(successContent){
+function showCreateEventProgressThenSuccess(successContent) {
     const chatMessagesContainer = document.getElementById("chat-box")
     const messageDiv = document.createElement("div")
     messageDiv.classList.add("message", "agent-message")
@@ -405,10 +370,10 @@ function showCreateEventProgressThenSuccess(successContent){
     contentDiv.classList.add("bubble")
 
     // Create event (loading animation)
-    contentDiv.innerHTML =`
+    contentDiv.innerHTML = `
         <div class="create-event-box">
             <div class="create-event-icon">
-                ${googleCalendarIconUrl ? `<img src="${googleCalendarIconUrl}" alt="Google Calendar" width="24" height="24">`: ''}
+                ${googleCalendarIconUrl ? `<img src="${googleCalendarIconUrl}" alt="Google Calendar" width="24" height="24">` : ''}
                 <div class="circular-loader"></div>
             </div>
             <div class="create-event-details">
@@ -422,21 +387,21 @@ function showCreateEventProgressThenSuccess(successContent){
     scrollChatToBottom()
 
     // After a short delay, replace with success UI in the backend
-    setTimeout(() =>{
+    setTimeout(() => {
         const eventTitle = successContent?.event_title || 'Your Event'
         const connectedEmail = successContent?.connected_email || ''
         contentDiv.classList.remove("bubble")
         const agentExplanationText = successContent?.agent_explanation || '';
-        
+
         let agentExplanation = '';
         if (agentExplanationText) {
             agentExplanation = `<div class="agent-explanation">${escapeHtml(agentExplanationText).replace(/\n/g, '<br>')}</div>`;
         }
-        
+
         contentDiv.innerHTML = `
             <div class="create-event-box">
                 <div class="create-event-icon">
-                    ${googleCalendarIconUrl ? `<img src="${googleCalendarIconUrl}" alt="Google Calendar" width="24" height="24">`: ''}
+                    ${googleCalendarIconUrl ? `<img src="${googleCalendarIconUrl}" alt="Google Calendar" width="24" height="24">` : ''}
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z" fill="#34A853"/>
                     </svg>
@@ -456,42 +421,42 @@ function showCreateEventProgressThenSuccess(successContent){
 
 // Function to update the conversation title in the recents list
 function updateRecentsTitle(convoId, newTitle) {
-     const recentsList = document.getElementById('recents-list'); // Ensure recentsList is accessible
-     if (!recentsList) {
-         console.warn("Recents list not found, cannot update title.");
-         return; // Exit if recents list not found
-     }
+    const recentsList = document.getElementById('recents-list'); // Ensure recentsList is accessible
+    if (!recentsList) {
+        console.warn("Recents list not found, cannot update title.");
+        return; // Exit if recents list not found
+    }
 
-     // Find the list item using data-convo-id
-     const recentItem = recentsList.querySelector(`li[data-convo-id="${convoId}"]`);
-     if (recentItem) {
-         const recentLink = recentItem.querySelector('.recent-link'); // Assuming the link has class 'recent-link'
-         if (recentLink) {
-             // Use textContent to avoid rendering HTML from the title
-             const plainTitle = String(newTitle || "New Chat").trim();
-             recentLink.textContent = '';
-             let i = 0;
-             (function typeTitle() {
-                 if (i < plainTitle.length) {
-                     recentLink.append(plainTitle.charAt(i));
-                     i++;
-                     setTimeout(typeTitle, 120);  // 120 ms between chars
-                 }
-             })();
+    // Find the list item using data-convo-id
+    const recentItem = recentsList.querySelector(`li[data-convo-id="${convoId}"]`);
+    if (recentItem) {
+        const recentLink = recentItem.querySelector('.recent-link'); // Assuming the link has class 'recent-link'
+        if (recentLink) {
+            // Use textContent to avoid rendering HTML from the title
+            const plainTitle = String(newTitle || "New Chat").trim();
+            recentLink.textContent = '';
+            let i = 0;
+            (function typeTitle() {
+                if (i < plainTitle.length) {
+                    recentLink.append(plainTitle.charAt(i));
+                    i++;
+                    setTimeout(typeTitle, 120);  // 120 ms between chars
+                }
+            })();
 
-             // Ensure active state
-             recentsList.querySelectorAll('li').forEach(li => li.classList.remove('active'));
-             recentItem.classList.add('active');
+            // Ensure active state
+            recentsList.querySelectorAll('li').forEach(li => li.classList.remove('active'));
+            recentItem.classList.add('active');
 
-              // Move to top (optional, but common for most recent)
-             recentsList.prepend(recentItem); // Move the updated item to the top
-             console.log(`Updated title for convo ID ${convoId} to "${plainTitle}".`);
-         } else {
-              console.warn(`Link element with class 'recent-link' not found within list item for convo ID ${convoId}.`);
-         }
-     } else {
-          console.warn(`List item with data-convo-id="${convoId}" not found in recents list.`);
-     }
+            // Move to top (optional, but common for most recent)
+            recentsList.prepend(recentItem); // Move the updated item to the top
+            console.log(`Updated title for convo ID ${convoId} to "${plainTitle}".`);
+        } else {
+            console.warn(`Link element with class 'recent-link' not found within list item for convo ID ${convoId}.`);
+        }
+    } else {
+        console.warn(`List item with data-convo-id="${convoId}" not found in recents list.`);
+    }
 }
 
 
@@ -516,59 +481,307 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
+    // --- Helper Functions for Rendering Structured Content ---
+
+    function renderEventSuccess(container, responseData) {
+        // Remove bubble class for structured content
+        container.classList.remove("bubble");
+        const responseContent = responseData.content || responseData; // Handle both full data or just content
+        const eventTitle = responseContent?.event_title || responseData?.event_title || 'Your Event';
+        const agentExplanationText = responseContent?.agent_explanation || responseData.response || '';
+
+        const eventSuccessHtml = `
+             <div class="create-event-box">
+                <div class="create-event-icon">
+                   ${googleCalendarIconUrl ? `<img src="${googleCalendarIconUrl}" alt="Google Calendar" width="24" height="24">` : ''}
+                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                     <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z" fill="#34A853"/>
+                   </svg>
+                </div>
+                <div class="create-event-details">
+                   <div class="create-event-title">${escapeHtml(eventTitle)}</div>
+                   <div class="create-event-subtitle success">Event created successfully</div>
+                 </div>
+             </div>
+          `;
+        container.innerHTML = eventSuccessHtml;
+        // Append a typed agent text bubble within the same message
+        if (agentExplanationText) {
+            const explainBubble = document.createElement('div');
+            explainBubble.classList.add('bubble');
+            explainBubble.style.marginTop = '8px';
+            container.appendChild(explainBubble);
+            typeText(explainBubble, agentExplanationText, 3, scrollChatToBottom);
+        }
+    }
+
+    function renderEventPreview(container, content, convoId) {
+        container.classList.remove("bubble");
+        let isEditMode = false;
+
+        // Store original data
+        let currentData = {
+            summary: content.summary,
+            start: new Date(content.start.dateTime),
+            end: new Date(content.end.dateTime),
+            startISO: content.start,
+            endISO: content.end,
+            attendees: content.attendees || []
+        };
+
+        function render() {
+            const dateStr = currentData.start.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+            const startTimeStr = currentData.start.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true });
+            const endTimeStr = currentData.end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true });
+
+            // Format for input fields (12-hour format with AM/PM)
+            const dateInputValue = currentData.start.toISOString().split('T')[0];
+            const startTimeInputValue = currentData.start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+            const endTimeInputValue = currentData.end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+            const html = `
+        <div class="event-preview-card" style="background: #1e1e1e; border: 1px solid #333; border-radius: 12px; padding: 16px; margin-top: 8px; color: #fff; font-family: sans-serif;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <span style="background: #333; color: #aaa; padding: 2px 8px; border-radius: 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 1px;">Draft</span>
+            </div>
+            
+            ${isEditMode ? `
+                <input type="text" class="edit-summary" value="${escapeHtml(currentData.summary)}" 
+                    style="width: 100%; background: #2a2a2a; border: 1px solid #555; border-radius: 6px; padding: 8px; margin-bottom: 8px; color: #fff; font-size: 16px; font-weight: 600; font-family: sans-serif;">
+            ` : `
+                <h3 class="display-summary" style="margin: 0 0 8px 0; font-size: 16px; font-weight: 600;">${escapeHtml(currentData.summary)}</h3>
+            `}
+            
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: #ccc; font-size: 14px;">
+                <span>📅</span>
+                ${isEditMode ? `
+                    <input type="date" class="edit-date" value="${dateInputValue}"
+                        style="background: #2a2a2a; border: 1px solid #555; border-radius: 4px; padding: 4px 8px; color: #fff; font-size: 14px;">
+                ` : `
+                    <span class="display-date">${dateStr}</span>
+                `}
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; color: #ccc; font-size: 14px;">
+                <span>⏰</span>
+                ${isEditMode ? `
+                    <input type="text" class="edit-start-time" value="${startTimeInputValue}" placeholder="9:00 AM"
+                        style="background: #2a2a2a; border: 1px solid #555; border-radius: 4px; padding: 4px 8px; color: #fff; font-size: 14px; width: 110px;">
+                    <span>-</span>
+                    <input type="text" class="edit-end-time" value="${endTimeInputValue}" placeholder="5:00 PM"
+                        style="background: #2a2a2a; border: 1px solid #555; border-radius: 4px; padding: 4px 8px; color: #fff; font-size: 14px; width: 110px;">
+                ` : `
+                    <span class="display-time">${startTimeStr} - ${endTimeStr}</span>
+                `}
+            </div>
+            
+            <div style="margin-bottom: 16px; font-size: 13px; display: flex; align-items: center; gap: 6px;">
+                ${content.conflicts
+                    ? '<span style="color: #ff6b6b;">⚠️ Conflict detected</span>'
+                    : '<span style="color: #4ec9b0;">✅ You are free</span>'}
+            </div>
+            
+            <div style="display: flex; gap: 10px;">
+                <button class="btn-confirm" style="flex: 1; background: #4285f4; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500;">Confirm</button>
+                <button class="btn-edit" style="flex: 1; background: #333; color: white; border: 1px solid #555; padding: 8px 16px; border-radius: 6px; cursor: pointer;">${isEditMode ? 'Cancel' : 'Edit'}</button>
+            </div>
+        </div>
+        `;
+
+            const card = container.querySelector('.event-preview-card');
+            if (card) {
+                card.outerHTML = html;
+            } else {
+                container.innerHTML = html;
+            }
+
+            attachEventHandlers();
+        }
+
+        function attachEventHandlers() {
+            const confirmBtn = container.querySelector('.btn-confirm');
+            const editBtn = container.querySelector('.btn-edit');
+
+            if (confirmBtn) {
+                confirmBtn.onclick = () => {
+                    // Gather current values if in edit mode
+                    if (isEditMode) {
+                        const summaryInput = container.querySelector('.edit-summary');
+                        const dateInput = container.querySelector('.edit-date');
+                        const startTimeInput = container.querySelector('.edit-start-time');
+                        const endTimeInput = container.querySelector('.edit-end-time');
+
+                        if (summaryInput && dateInput && startTimeInput && endTimeInput) {
+                            // Update currentData with edited values
+                            currentData.summary = summaryInput.value;
+
+                            const dateValue = dateInput.value;
+                            const startTimeStr = startTimeInput.value;
+                            const endTimeStr = endTimeInput.value;
+
+                            // Parse 12-hour time format (e.g., "9:00 AM")
+                            function parseTime12Hour(timeStr) {
+                                const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+                                if (!match) return null;
+                                let hours = parseInt(match[1]);
+                                const minutes = match[2];
+                                const period = match[3].toUpperCase();
+                                if (period === 'PM' && hours !== 12) hours += 12;
+                                if (period === 'AM' && hours === 12) hours = 0;
+                                return `${hours.toString().padStart(2, '0')}:${minutes}`;
+                            }
+
+                            const startTime24 = parseTime12Hour(startTimeStr);
+                            const endTime24 = parseTime12Hour(endTimeStr);
+
+                            if (startTime24 && endTime24) {
+                                // Construct new Date objects
+                                currentData.start = new Date(`${dateValue}T${startTime24}`);
+                                currentData.end = new Date(`${dateValue}T${endTime24}`);
+
+                                // Update ISO format for submission
+                                currentData.startISO = { dateTime: currentData.start.toISOString() };
+                                currentData.endISO = { dateTime: currentData.end.toISOString() };
+                            }
+                        }
+                    }
+
+                    confirmBtn.textContent = "Confirming...";
+                    confirmBtn.disabled = true;
+
+                    // Submit with current data
+                    const submissionData = {
+                        summary: currentData.summary,
+                        start: currentData.startISO,
+                        end: currentData.endISO,
+                        attendees: currentData.attendees
+                    };
+
+                    submitConfirmation(submissionData, convoId, container);
+                };
+            }
+
+            if (editBtn) {
+                editBtn.onclick = () => {
+                    if (isEditMode) {
+                        // Cancel edit - revert to original data
+                        currentData = {
+                            summary: content.summary,
+                            start: new Date(content.start.dateTime),
+                            end: new Date(content.end.dateTime),
+                            startISO: content.start,
+                            endISO: content.end,
+                            attendees: content.attendees || []
+                        };
+                    }
+                    isEditMode = !isEditMode;
+                    render();
+                };
+            }
+        }
+
+        // Initial render
+        render();
+
+        // Add agent message bubble below
+        if (content.agent_message) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'bubble';
+            msgDiv.style.marginTop = '8px';
+            msgDiv.textContent = content.agent_message;
+            container.appendChild(msgDiv);
+        }
+    };
+
+    function submitConfirmation(eventData, convoId, container) {
+        const form = document.getElementById("chat-form");
+        const postUrl = form.action;
+        const csrfToken = form.querySelector("[name=csrfmiddlewaretoken]").value;
+
+        fetch(postUrl, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": csrfToken,
+            },
+            body: JSON.stringify({
+                confirmation_data: eventData,
+                convo_id: convoId,
+                client_tz: Intl.DateTimeFormat().resolvedOptions().timeZone
+            }),
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.type === 'event_success') {
+                    // Clear preview and render success in the same container
+                    container.innerHTML = '';
+                    renderEventSuccess(container, data);
+                } else {
+                    // Handle error
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'bubble';
+                    errorDiv.style.color = 'red';
+                    errorDiv.textContent = data.response || "Something went wrong.";
+                    container.appendChild(errorDiv);
+                }
+            })
+            .catch(err => console.error(err));
+    }
+
+
     // --- Initial Page Load Rendering & Welcome Message Handling ---
     console.log("DOMContentLoaded: Checking for initial messages to render/animate.");
-     // Re-query initial messages to ensure we get the correct elements after DOM load
+    // Re-query initial messages to ensure we get the correct elements after DOM load
     //  const initialMessagesOnLoad = chatMessagesContainer ? chatMessagesContainer.querySelectorAll('.message') : [];
 
 
-     if (initialMessagesOnLoad.length > 0) {
-         console.log(`Found ${initialMessagesOnLoad.length} initial messages.`);
-         let welcomeMessageFoundAndAnimated = false;
+    if (initialMessagesOnLoad.length > 0) {
+        console.log(`Found ${initialMessagesOnLoad.length} initial messages.`);
+        let welcomeMessageFoundAndAnimated = false;
 
-         initialMessagesOnLoad.forEach(messageDiv => {
-             const sender = messageDiv.dataset.sender;
-             const bubble = messageDiv.querySelector('.bubble'); // Get the bubble inside the message
+        initialMessagesOnLoad.forEach(messageDiv => {
+            const sender = messageDiv.dataset.sender;
+            const bubble = messageDiv.querySelector('.bubble'); // Get the bubble inside the message
 
-             if (bubble) { // Check if bubble exists
-                 const rawText = bubble.dataset.raw; // Get raw text from bubble, not messageDiv
-                 // If it's the welcome message rendered by Django, animate it
-                 if (bubble.dataset.welcomeMessage === 'true') { // Check for the data attribute on the bubble
-                      console.log("Found initial welcome message (from template). Starting animation.");
-                      welcomeMessageFoundAndAnimated = true;
-                      // Use typeText for animation. Pass scrollChatToBottom as callback.
-                      // Pass the raw text for animation and final rendering
-                      typeText(bubble, rawText || bubble.innerHTML, 10, scrollChatToBottom); // Use data-raw or innerHTML as fallback
-                 } else if (sender === 'agent' && rawText !== undefined) {
-                      // Render markdown for other agent messages statically if raw text is available
-                      console.log("Rendering markdown for agent message:", rawText);
-                      bubble.innerHTML = marked.parse(rawText);
-                 } else if (sender === 'user') {
-                      // Render plain text for user messages statically
-                       bubble.textContent = rawText || bubble.textContent; // Use raw or existing text
-                 }
+            if (bubble) { // Check if bubble exists
+                const rawText = bubble.dataset.raw; // Get raw text from bubble, not messageDiv
+                // If it's the welcome message rendered by Django, animate it
+                if (bubble.dataset.welcomeMessage === 'true') { // Check for the data attribute on the bubble
+                    console.log("Found initial welcome message (from template). Starting animation.");
+                    welcomeMessageFoundAndAnimated = true;
+                    // Use typeText for animation. Pass scrollChatToBottom as callback.
+                    // Pass the raw text for animation and final rendering
+                    typeText(bubble, rawText || bubble.innerHTML, 10, scrollChatToBottom); // Use data-raw or innerHTML as fallback
+                } else if (sender === 'agent' && rawText !== undefined) {
+                    // Render markdown for other agent messages statically if raw text is available
+                    console.log("Rendering markdown for agent message:", rawText);
+                    bubble.innerHTML = marked.parse(rawText);
+                } else if (sender === 'user') {
+                    // Render plain text for user messages statically
+                    bubble.textContent = rawText || bubble.textContent; // Use raw or existing text
+                }
             } else {
-                 // Handle structured message types rendered by template on load if needed
-                 // Currently, only text messages (including welcome) are rendered by template
-                 // Add logic here if other types (like needs_connection) can be pre-rendered
-                 console.warn("Message div found without a bubble element during initial render:", messageDiv);
+                // Handle structured message types rendered by template on load if needed
+                // Currently, only text messages (including welcome) are rendered by template
+                // Add logic here if other types (like needs_connection) can be pre-rendered
+                console.warn("Message div found without a bubble element during initial render:", messageDiv);
             }
-         });
+        });
 
-         // Ensure scroll to bottom after initial render/animation setup, but only if no welcome animation started.
-          // If welcome animation started, the callback handles the scroll.
-          if (!welcomeMessageFoundAndAnimated) {
-              scrollChatToBottom();
-          }
+        // Ensure scroll to bottom after initial render/animation setup, but only if no welcome animation started.
+        // If welcome animation started, the callback handles the scroll.
+        if (!welcomeMessageFoundAndAnimated) {
+            scrollChatToBottom();
+        }
 
-     } else {
+    } else {
         //  This else block is for when no initial messages are found *at all* from the template render.
         //  With the current view logic, this block should ideally not be hit when `is_new_conversation_page` is true
         //  because the view always adds a temporary welcome message in that case.
         //  If you change the view to *not* render the temporary message, you would need JS to add it here.
-         console.log("No initial messages found from template.");
-         scrollChatToBottom(); // Scroll to ensure input is visible
-     }
+        console.log("No initial messages found from template.");
+        scrollChatToBottom(); // Scroll to ensure input is visible
+    }
 
 
     // --- Handle form submission ---
@@ -591,16 +804,16 @@ document.addEventListener("DOMContentLoaded", () => {
             // Get the current conversation ID from the browser URL
             let conversationId = null;
             const pathParts = window.location.pathname.split('/').filter(part => part); // Split and remove empty parts
-             // Assuming URL structure is /agent/assistant/UUID/ or /agent/assistant/new/
+            // Assuming URL structure is /agent/assistant/UUID/ or /agent/assistant/new/
             // Find the UUID part in the URL
             const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-             for (let i = 0; i < pathParts.length; i++) {
-                 if (uuidRegex.test(pathParts[i])) {
-                     conversationId = pathParts[i];
-                     break;
-                 }
-             }
-             // If the last part is 'new', convoId remains null here, which is correct for creating a new convo
+            for (let i = 0; i < pathParts.length; i++) {
+                if (uuidRegex.test(pathParts[i])) {
+                    conversationId = pathParts[i];
+                    break;
+                }
+            }
+            // If the last part is 'new', convoId remains null here, which is correct for creating a new convo
 
             // Get the POST URL from the form action (set to chat_process)
             const postUrl = form.action; // This is now correctly set to {% url 'home_page:chat_process' %}
@@ -610,8 +823,8 @@ document.addEventListener("DOMContentLoaded", () => {
             // For user messages, responseData will just contain the text
             appendMessage("user", { type: 'text', response: userMessage }, false, conversationId, false); // isTyping=false for user message
             if (textarea) {
-                 textarea.value = ''; // Clear the textarea
-                 textarea.style.height = 'auto'; // Reset textarea height
+                textarea.value = ''; // Clear the textarea
+                textarea.style.height = 'auto'; // Reset textarea height
             }
 
 
@@ -630,7 +843,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 // POST data as JSON (preferred over form-urlencoded for complex data)
                 const response = await fetch(postUrl, { // Use the dedicated POST URL
-                        method: "POST",
+                    method: "POST",
                     headers: {
                         "Content-Type": "application/json", // Send as JSON
                         "X-CSRFToken": csrfToken,
@@ -644,16 +857,16 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
 
                 if (!response.ok) {
-                     console.error("Fetch failed with status:", response.status, response.statusText);
-                     // Reuse the intent confirmation structure for error display
-                     if (intentElement && intentElement.mainContentDiv) {
-                         intentElement.mainContentDiv.className = 'bubble'; // Change to bubble class
-                         intentElement.mainContentDiv.innerHTML = `Error communicating with the server (${response.status}). Please try again.`;
-                     } else {
-                         // Fallback if intent element is not available
-                         appendMessage("agent", { type: 'text', response: `Error communicating with the server (${response.status}). Please try again.` }, false, conversationId, false);
-                     }
-                     return;
+                    console.error("Fetch failed with status:", response.status, response.statusText);
+                    // Reuse the intent confirmation structure for error display
+                    if (intentElement && intentElement.mainContentDiv) {
+                        intentElement.mainContentDiv.className = 'bubble'; // Change to bubble class
+                        intentElement.mainContentDiv.innerHTML = `Error communicating with the server (${response.status}). Please try again.`;
+                    } else {
+                        // Fallback if intent element is not available
+                        appendMessage("agent", { type: 'text', response: `Error communicating with the server (${response.status}). Please try again.` }, false, conversationId, false);
+                    }
+                    return;
                 }
 
                 const data = await response.json();
@@ -668,14 +881,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 setTimeout(() => {
                     // --- Handle Agent's Structured Response ---
                     const agentResponse = data.agent_response_data || {
-                        type:    data.type,
-                        response:data.response,
+                        type: data.type,
+                        response: data.response,
                         content: data.content || {}
                     };
                     if (agentResponse) {
                         const responseType = agentResponse.type || 'text';
                         const responseContent = responseType === 'text' ? agentResponse.response : agentResponse.content;
-                        
+
                         // Debug logging (remove when issues are resolved)
                         if (responseType === 'calendar_action_request' && responseContent?.action === 'unknown') {
                             console.log("⚠️ Got 'unknown' action - this usually means AI returned multiple JSON objects");
@@ -717,53 +930,25 @@ document.addEventListener("DOMContentLoaded", () => {
                                 if (responseType === 'text') {
                                     const textContent = responseContent || '';
                                     intentElement.messageDiv.dataset.raw = textContent;
-                                    
+
                                     // Clear existing content and change class from intent-confirmation-box to bubble
                                     intentElement.mainContentDiv.innerHTML = '';
                                     intentElement.mainContentDiv.className = 'bubble'; // Replace all classes with bubble
-                                    
+
                                     // Use typeText for typing animation directly on the main content div
                                     typeText(intentElement.mainContentDiv, textContent, 3, scrollChatToBottom);
-                                    
+
                                 } else {
                                     // Handle other response types (calendar actions, etc.) directly
                                     intentElement.mainContentDiv.innerHTML = '';
                                     intentElement.mainContentDiv.className = ''; // Clear all classes first
-                                    
+
                                     // Handle different response types directly without creating new messages
                                     if (responseType === 'event_success') {
-                                        // Don't add bubble class for structured content - leave it empty
-                                        const eventTitle = responseContent?.event_title || 'Your Event';
-                                        const connectedEmail = responseContent?.connected_email || '';
-                                        const eventLink = responseContent?.event_link || '';
-                                        const createdStart = responseContent?.created_start || '';
-                                        const createdEnd = responseContent?.created_end || '';
+                                        renderEventSuccess(intentElement.mainContentDiv, agentResponse);
 
-                                        const agentExplanationText = agentResponse.content?.agent_explanation || '';
-                                        
-                                        const eventSuccessHtml = `
-                                             <div class="create-event-box">
-                                                <div class="create-event-icon">
-                                                   ${googleCalendarIconUrl ? `<img src="${googleCalendarIconUrl}" alt="Google Calendar" width="24" height="24">` : ''}
-                                                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                     <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z" fill="#34A853"/>
-                                                   </svg>
-                                                </div>
-                                                <div class="create-event-details">
-                                                   <div class="create-event-title">${escapeHtml(eventTitle)}</div>
-                                                   <div class="create-event-subtitle success">Event created successfully</div>
-                                                 </div>
-                                             </div>
-                                          `;
-                                        intentElement.mainContentDiv.innerHTML = eventSuccessHtml;
-                                        // Append a typed agent text bubble within the same message (avoid duplicate avatar)
-                                        if (agentExplanationText) {
-                                            const explainBubble = document.createElement('div');
-                                            explainBubble.classList.add('bubble');
-                                            // Append inside the main content div so it appears below the card
-                                            intentElement.mainContentDiv.appendChild(explainBubble);
-                                            typeText(explainBubble, agentExplanationText, 3, scrollChatToBottom);
-                                        }
+                                    } else if (responseType === 'event_confirmation_request') {
+                                        renderEventPreview(intentElement.mainContentDiv, responseContent, data.convo_id);
 
                                     } else if (responseType === 'needs_connection') {
                                         // Keep the bubble styling so it aligns with the agent avatar
@@ -771,7 +956,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                         const connectedEmail = responseContent?.email || '';
                                         const agentPrompt = responseContent?.message_for_user || 'Please connect your Google account.';
                                         const connectHref = responseContent?.content_url || responseContent?.connect_url || googleConnectUrl;
-                                        
+
                                         const needsConnectionHtml = `
                                              <p class="connect-account-heading">${escapeHtml(agentPrompt)}</p>
                                              <div class="connect-buttons">
@@ -792,7 +977,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                     } else if (responseType === 'connected_status') {
                                         // Don't use bubble class for structured content - leave it empty
                                         const connectedEmail = responseContent?.email || 'Account';
-                                        
+
                                         const connectedStatusHtml = `
                                              <div class="connected-account-status">
                                                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -810,7 +995,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                         intentElement.mainContentDiv.innerHTML = connectedStatusHtml;
                                     }
                                 }
-                                
+
                                 scrollChatToBottom();
                             }, 800);
                         }
@@ -828,7 +1013,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             // (Keep the code that updates the sidebar right after this block.)
 
                             // 1.   Update datasets so the next send goes to this convo
-                            form.dataset.initialConvoId          = data.convo_id;
+                            form.dataset.initialConvoId = data.convo_id;
                             document.getElementById('chat-input').dataset.convoId = data.convo_id;
 
                             // 2.   Build / replace the Recents-list item
@@ -846,12 +1031,12 @@ document.addEventListener("DOMContentLoaded", () => {
                                 } else {
                                     // Otherwise build a brand-new entry
                                     li = document.createElement('li');
-                                    li.dataset.convoId   = data.convo_id;
+                                    li.dataset.convoId = data.convo_id;
                                     li.dataset.deleteUrl = `/agent/assistant/delete_conversation/${data.convo_id}/`;
                                     li.className = 'active';
 
                                     const link = document.createElement('a');
-                                    link.href  = `/agent/assistant/${data.convo_id}/`;
+                                    link.href = `/agent/assistant/${data.convo_id}/`;
                                     link.className = 'recent-link';
                                     link.textContent = data.convo_title || 'New Chat';
 
@@ -873,21 +1058,21 @@ document.addEventListener("DOMContentLoaded", () => {
                             scrollChatToBottom();
 
                         } else {
-                             console.log("This POST was to an existing conversation. Ensuring active state).");
-                             // Ensure the correct item is marked active if not a new convo created by this post
-                             const recentsList = document.getElementById('recents-list');
-                             if (recentsList && data.convo_id) {
-                                  const currentConvoItem = recentsList.querySelector(`li[data-convo-id="${data.convo_id}"]`);
-                                  if (currentConvoItem) {
-                                      recentsList.querySelectorAll('li').forEach(li => li.classList.remove('active'));
-                                      currentConvoItem.classList.add('active');
-                                      // Move to top (optional)
-                                      recentsList.prepend(currentConvoItem);
-                                  }
-                             }
-                                 // Title update for subsequent messages is handled above based on responseType
+                            console.log("This POST was to an existing conversation. Ensuring active state).");
+                            // Ensure the correct item is marked active if not a new convo created by this post
+                            const recentsList = document.getElementById('recents-list');
+                            if (recentsList && data.convo_id) {
+                                const currentConvoItem = recentsList.querySelector(`li[data-convo-id="${data.convo_id}"]`);
+                                if (currentConvoItem) {
+                                    recentsList.querySelectorAll('li').forEach(li => li.classList.remove('active'));
+                                    currentConvoItem.classList.add('active');
+                                    // Move to top (optional)
+                                    recentsList.prepend(currentConvoItem);
+                                }
+                            }
+                            // Title update for subsequent messages is handled above based on responseType
                         }
-                       // --- END ----------------------------------------------------
+                        // --- END ----------------------------------------------------
 
                     } else if (data.error) {
                         // Display error message if backend sends one
@@ -900,24 +1085,24 @@ document.addEventListener("DOMContentLoaded", () => {
                             appendMessage("agent", { type: 'text', response: `Error: ${data.error}` }, false, data.convo_id, data.is_first_actual_message);
                         }
 
-                         // If it was the first message but backend returned an error, update title immediately with fallback
-                         if (data.is_first_actual_message && data.convo_id && data.convo_title) {
-                             console.log("First message, but backend returned error. Triggering immediate title update (likely fallback title).");
-                              updateRecentsTitle(data.convo_id, data.convo_title);
-                         } else if (data.convo_id && data.convo_title) {
-                              updateRecentsTitle(data.convo_id, data.convo_title);
-                         }
+                        // If it was the first message but backend returned an error, update title immediately with fallback
+                        if (data.is_first_actual_message && data.convo_id && data.convo_title) {
+                            console.log("First message, but backend returned error. Triggering immediate title update (likely fallback title).");
+                            updateRecentsTitle(data.convo_id, data.convo_title);
+                        } else if (data.convo_id && data.convo_title) {
+                            updateRecentsTitle(data.convo_id, data.convo_title);
+                        }
 
                     } else {
-                         // Handle cases where backend returns no agent_response_data or error
-                         console.log("Backend response had no agent_response_data or error.");
-                         // If it was the first message but backend returned nothing useful, update title
-                          if (data.is_first_actual_message && data.convo_id && data.convo_title) {
-                             console.log("First message, but no agent response. Triggering immediate title update (likely fallback title).");
-                              updateRecentsTitle(data.convo_id, data.convo_title);
-                         } else if (data.convo_id && data.convo_title) {
-                              updateRecentsTitle(data.convo_id, data.convo_title);
-                         }
+                        // Handle cases where backend returns no agent_response_data or error
+                        console.log("Backend response had no agent_response_data or error.");
+                        // If it was the first message but backend returned nothing useful, update title
+                        if (data.is_first_actual_message && data.convo_id && data.convo_title) {
+                            console.log("First message, but no agent response. Triggering immediate title update (likely fallback title).");
+                            updateRecentsTitle(data.convo_id, data.convo_title);
+                        } else if (data.convo_id && data.convo_title) {
+                            updateRecentsTitle(data.convo_id, data.convo_title);
+                        }
                     }
                 }, 1200); // Wait for intent confirmation to show briefly
 
@@ -933,17 +1118,17 @@ document.addEventListener("DOMContentLoaded", () => {
                     appendMessage("agent", { type: 'text', response: `Sorry, an unexpected error occurred: ${error.message}` }, false, conversationId, false);
                 }
 
-                 // If it was the first message but there was a JS error, update title with fallback if possible
-                 // This requires the convo ID to be available in the initial page context or the POST body
-                 const currentConvoIdFromUrl = new URL(window.location.href).pathname.split('/').filter(part => part).pop(); // Get last non-empty part of path
-                 // Check if it's a valid-looking UUID before using it
+                // If it was the first message but there was a JS error, update title with fallback if possible
+                // This requires the convo ID to be available in the initial page context or the POST body
+                const currentConvoIdFromUrl = new URL(window.location.href).pathname.split('/').filter(part => part).pop(); // Get last non-empty part of path
+                // Check if it's a valid-looking UUID before using it
                 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                 const errorConvoId = (currentConvoIdFromUrl && uuidRegex.test(currentConvoIdFromUrl)) ? currentConvoIdFromUrl : null;
 
                 if (errorConvoId) { // Best-effort title update
-                      console.log("JS error on first message. Triggering immediate title update (fallback).");
+                    console.log("JS error on first message. Triggering immediate title update (fallback).");
                     updateRecentsTitle(errorConvoId, "Error occurred");
-                 }
+                }
 
 
             }
@@ -1030,11 +1215,11 @@ function sendUserMessage(messageText, conversationId, inputElement) {
             conversationId = chatForm.dataset.initialConvoId;
         }
     }
-    
+
     // For new conversations, we don't need a conversationId
     // The backend will create one for us
     console.log("sendUserMessage called with:", { messageText, conversationId, hasInputElement: !!inputElement });
-    
+
     // Show the user message immediately
     const chatBox = $('#chat-box');
     const userMessageHtml = `
@@ -1090,59 +1275,59 @@ function sendUserMessage(messageText, conversationId, inputElement) {
                 headers: {
                     'X-CSRFToken': csrftoken
                 },
-                success: function(response) {
+                success: function (response) {
                     console.log("Message sent successfully, processing response:", response);
                     // Remove the thinking indicator
                     $('#agent-thinking').remove();
-                
+
                     // --- CORRECTED: Handle the response data (check top-level keys) ---
                     if (response.type === 'calendar_action_request') {
                         // Handle structured calendar action request
                         const agentResponse = response; // The response itself contains the data
                         displayAgentMessage(agentResponse.content.message_for_user || "Processing calendar action..."); // Display introductory message
                         handleCalendarActionRequest(agentResponse.content); // Show the action UI (ensure handleCalendarActionRequest is defined)
-                
+
                     } else if (response.type === 'text') {
                         // Handle a standard text response
                         const agentResponse = response; // The response itself contains the data
                         displayAgentMessage(agentResponse.response); // Display the AI's text response (ensure displayAgentMessage is defined)
-                
+
                     } else if (response.error) {
                         // Handle error sent by the backend
                         const agentResponse = response; // The response itself contains the error
                         appendMessage("agent", { type: 'text', response: `Error: ${agentResponse.error}` }, false, response.convo_id, response.is_first_actual_message); // Use appendMessage for errors (ensure appendMessage is defined)
-                
+
                     } else {
-                         // Handle cases where backend returns an unexpected structure
-                         console.warn("Backend response had no expected type ('text' or 'calendar_action_request') or error.", response);
-                         // Optionally display a generic message or just remove the placeholder
-                         // appendMessage("agent", { type: 'text', response: "Received an unexpected response from the agent." }, false, response.convo_id, response.is_first_actual_message);
-                         // If placeholder is still there, remove it.
-                         $('#agent-thinking').remove(); // Should already be removed above, but safety
+                        // Handle cases where backend returns an unexpected structure
+                        console.warn("Backend response had no expected type ('text' or 'calendar_action_request') or error.", response);
+                        // Optionally display a generic message or just remove the placeholder
+                        // appendMessage("agent", { type: 'text', response: "Received an unexpected response from the agent." }, false, response.convo_id, response.is_first_actual_message);
+                        // If placeholder is still there, remove it.
+                        $('#agent-thinking').remove(); // Should already be removed above, but safety
                     }
                     // --- END CORRECTED Handling ---
-                
-       
-                   // --- Handle New Conversation Creation & Recents Update (if it was the first message) ---
-                   // This logic runs if the backend confirmed it was the first message and created a new convo
-                   if (response.is_first_actual_message && response.convo_id) {
-                       console.log("First message in new convo → updating URL & sidebar");
 
-                       const newUrl = `/agent/assistant/${response.convo_id}/`;
 
-                       // Update browser URL without reload
-                       window.history.pushState({}, response.convo_title || 'New Chat', newUrl);
+                    // --- Handle New Conversation Creation & Recents Update (if it was the first message) ---
+                    // This logic runs if the backend confirmed it was the first message and created a new convo
+                    if (response.is_first_actual_message && response.convo_id) {
+                        console.log("First message in new convo → updating URL & sidebar");
 
-                       // Update form/input so future sends keep using this convo
-                       $('#chat-form').data('initial-convo-id', response.convo_id);
-                       $('#chat-input').data('convo-id', response.convo_id);
+                        const newUrl = `/agent/assistant/${response.convo_id}/`;
 
-                       // Remove any placeholder li
-                       const placeholderLi = $('#recents-list li[data-placeholder="true"]');
-                       if (placeholderLi.length) placeholderLi.remove();
+                        // Update browser URL without reload
+                        window.history.pushState({}, response.convo_title || 'New Chat', newUrl);
 
-                       // Build the new recents <li> with empty <a>, then type out the title
-                       const $newLi = $(`
+                        // Update form/input so future sends keep using this convo
+                        $('#chat-form').data('initial-convo-id', response.convo_id);
+                        $('#chat-input').data('convo-id', response.convo_id);
+
+                        // Remove any placeholder li
+                        const placeholderLi = $('#recents-list li[data-placeholder="true"]');
+                        if (placeholderLi.length) placeholderLi.remove();
+
+                        // Build the new recents <li> with empty <a>, then type out the title
+                        const $newLi = $(`
                            <li data-convo-id="${response.convo_id}"
                                data-delete-url="/agent/assistant/delete_conversation/${response.convo_id}/"
                                class="active animate__animated animate__fadeIn just-created">
@@ -1153,36 +1338,36 @@ function sendUserMessage(messageText, conversationId, inputElement) {
                            </li>
                        `);
 
-                       // Animate the title typing
-                       const fullTitle = response.convo_title || 'New Chat';
-                       const $link     = $newLi.find('.recent-link');
-                       let i = 0;
-                       function typeTitle() {
-                           if (i < fullTitle.length) {
-                               $link.append(fullTitle.charAt(i));
-                               i++;
-                               setTimeout(typeTitle, 120);
-                           }
-                       }
-                       typeTitle();
+                        // Animate the title typing
+                        const fullTitle = response.convo_title || 'New Chat';
+                        const $link = $newLi.find('.recent-link');
+                        let i = 0;
+                        function typeTitle() {
+                            if (i < fullTitle.length) {
+                                $link.append(fullTitle.charAt(i));
+                                i++;
+                                setTimeout(typeTitle, 120);
+                            }
+                        }
+                        typeTitle();
 
-                       // Prepend and activate
-                       $('#recents-list li').removeClass('active');
-                       $('#recents-list').prepend($newLi);
+                        // Prepend and activate
+                        $('#recents-list li').removeClass('active');
+                        $('#recents-list').prepend($newLi);
 
-                       // Re-attach the delete-button handler
-                       $newLi.find('.delete-recent-btn').on('click', function(e) {
-                           e.preventDefault();
-                           e.stopPropagation();
-                           // ... existing delete code ...
-                       });
+                        // Re-attach the delete-button handler
+                        $newLi.find('.delete-recent-btn').on('click', function (e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            // ... existing delete code ...
+                        });
 
-                       return; 
-                   }
-       
+                        return;
+                    }
+
                 },
-                error: function(xhr, status, error) {
-                     // Remove the thinking indicator
+                error: function (xhr, status, error) {
+                    // Remove the thinking indicator
                     $('#agent-thinking').remove();
                     // Display an error message
                     let errorMessage = 'An error occurred while sending your message.'; // Generic error for sending
@@ -1193,12 +1378,12 @@ function sendUserMessage(messageText, conversationId, inputElement) {
                     } else {
                         errorMessage += ` Status: ${xhr.status}`;
                     }
-                   alert(errorMessage);
-                   console.error("Message sending failed.", status, error, xhr);
-       
-                   // Do not clear the input on error so the user can retry/edit
+                    alert(errorMessage);
+                    console.error("Message sending failed.", status, error, xhr);
+
+                    // Do not clear the input on error so the user can retry/edit
                 }
-             });
+            });
         });
     });
 }
@@ -1275,10 +1460,10 @@ function handleCalendarActionRequest(content) {
                     </div>
                 </div>
             </div>`;
-         chatBox.append(actionUiHtml);
+        chatBox.append(actionUiHtml);
 
-         // Add event listener to the skip button if needed (optional based on requirements)
-        $('.skip-button').on('click', function() {
+        // Add event listener to the skip button if needed (optional based on requirements)
+        $('.skip-button').on('click', function () {
             // Handle skip logic here, e.g., remove the UI, send a message back to the agent
             $(this).closest('.calendar-action-ui').remove();
             displayAgentMessage("Okay, skipping the calendar action for now.");
@@ -1286,17 +1471,17 @@ function handleCalendarActionRequest(content) {
 
 
     } else if (content.create_event_form) {
-         // Show the create event form (this part needs to be implemented based on how the form is rendered/sent)
-         // For now, let's just display a message indicating a form should appear.
-         displayAgentMessage("Okay, I'm ready to create the event. (Form display needs implementation)");
-          // Ideally, the server would send HTML for the form, or the JS would dynamically create it
-         // based on the 'create_event_form' data structure if provided.
-         // Example (conceptual):
-         // const formHtml = buildCreateEventForm(content.create_event_form_data);
-         // chatBox.append(`<div class="calendar-action-ui">${formHtml}</div>`);
+        // Show the create event form (this part needs to be implemented based on how the form is rendered/sent)
+        // For now, let's just display a message indicating a form should appear.
+        displayAgentMessage("Okay, I'm ready to create the event. (Form display needs implementation)");
+        // Ideally, the server would send HTML for the form, or the JS would dynamically create it
+        // based on the 'create_event_form' data structure if provided.
+        // Example (conceptual):
+        // const formHtml = buildCreateEventForm(content.create_event_form_data);
+        // chatBox.append(`<div class="calendar-action-ui">${formHtml}</div>`);
 
     }
-     // Add other action types here (e.g., confirmation, details forms)
+    // Add other action types here (e.g., confirmation, details forms)
 
     chatBox.scrollTop(chatBox[0].scrollHeight);
 }
@@ -1320,7 +1505,7 @@ function getCookie(name) {
 
 
 
-$(document).ready(function() {
+$(document).ready(function () {
     const messageInput = $('#chat-input');
     const sendButton = $('#send-button');
     const chatForm = $('#chat-form');
@@ -1371,10 +1556,10 @@ $(document).ready(function() {
         console.log("New message element found:", newMessageElement.length > 0);
 
         if (newMessageElement.length) {
-             // Unescape HTML entities in the welcome message text before typing
-             // Using jQuery's text() method to unescape
-             const unescapedWelcomeText = $('<div>').html(welcomeMessageText).text();
-             console.log("Unescaped welcome message text:", unescapedWelcomeText);
+            // Unescape HTML entities in the welcome message text before typing
+            // Using jQuery's text() method to unescape
+            const unescapedWelcomeText = $('<div>').html(welcomeMessageText).text();
+            console.log("Unescaped welcome message text:", unescapedWelcomeText);
 
 
             // Use your existing typing animation logic
@@ -1392,10 +1577,10 @@ $(document).ready(function() {
                     chatBox.scrollTop(chatBox[0].scrollHeight);
                     setTimeout(typeWriter, typingSpeed);
                 } else {
-                     // Typing finished. Final scroll.
-                     newMessageElement.html(marked.parse(fullText)); // Apply markdown parsing
-                     chatBox.scrollTop(chatBox[0].scrollHeight);
-                     console.log("Typing animation finished.");
+                    // Typing finished. Final scroll.
+                    newMessageElement.html(marked.parse(fullText)); // Apply markdown parsing
+                    chatBox.scrollTop(chatBox[0].scrollHeight);
+                    console.log("Typing animation finished.");
                 }
             }
             typeWriter(); // Start the animation
@@ -1437,7 +1622,7 @@ $(document).ready(function() {
     //     }
     // });
 
-    recentsList.on('click', '.delete-recent-btn', function(e){
+    recentsList.on('click', '.delete-recent-btn', function (e) {
         e.preventDefault(); // Prevent the default link behavior of the parent li/a
         e.stopPropagation(); // Prevent the click from bubbling up to the list item's link
 
@@ -1465,7 +1650,7 @@ $(document).ready(function() {
                 type: 'POST',
                 headers: { 'X-CSRFToken': csrftoken }, // Send CSRF token in header
 
-                success: function(response) {
+                success: function (response) {
                     console.log("Delete request success:", response);
                     if (response.success) {
                         // Remove the list item from the DOM
@@ -1474,35 +1659,35 @@ $(document).ready(function() {
 
                         // Handle redirect if a redirect URL is provided by the backend
                         if (response.redirect_url) {
-                             console.log("Redirecting to:", response.redirect_url);
-                             window.location.href = response.redirect_url;
+                            console.log("Redirecting to:", response.redirect_url);
+                            window.location.href = response.redirect_url;
                         } else {
                             // Optional fallback: if no redirect URL and the deleted item was active,
                             // you might want to redirect to the base assistant page or the latest remaining.
                             // However, the backend should ideally provide the redirect_url.
                             console.warn("Delete success but no redirect_url received from backend.");
                             // If no convos remain and no redirect, display the "No conversations yet" message
-                             if (recentsList.find('li').length === 0) {
-                                  $('.no-convos-msg').show(); // Assuming you have this element and it's hidden by default
-                                   // Optionally, clear the chat panel if no convos remain
-                                  chatBox.empty(); // Clear chat messages
-                             }
+                            if (recentsList.find('li').length === 0) {
+                                $('.no-convos-msg').show(); // Assuming you have this element and it's hidden by default
+                                // Optionally, clear the chat panel if no convos remain
+                                chatBox.empty(); // Clear chat messages
+                            }
                         }
 
                     } else {
                         alert('Error deleting conversation: ' + (response.error || 'Unknown error'));
                     }
                 },
-                error: function(xhr, status, error) {
+                error: function (xhr, status, error) {
                     console.error("Delete request failed:", status, error, xhr);
                     let errorMessage = 'An error occurred while trying to delete the conversation.';
-                     if (xhr.status === 403) {
-                         errorMessage = 'You do not have permission to delete this conversation.';
-                     } else if (xhr.responseJSON && xhr.responseJSON.error) {
-                         errorMessage = 'Error: ' + xhr.responseJSON.error;
-                     } else {
-                          errorMessage += ` Status: ${xhr.status}`;
-                     }
+                    if (xhr.status === 403) {
+                        errorMessage = 'You do not have permission to delete this conversation.';
+                    } else if (xhr.responseJSON && xhr.responseJSON.error) {
+                        errorMessage = 'Error: ' + xhr.responseJSON.error;
+                    } else {
+                        errorMessage += ` Status: ${xhr.status}`;
+                    }
                     alert(errorMessage);
                 }
             });
@@ -1588,7 +1773,7 @@ function showIntentConfirmation() {
     // Create main content container that will be updated throughout the flow
     const mainContentDiv = document.createElement("div");
     mainContentDiv.classList.add("intent-confirmation-box"); // Use intent confirmation specific class
-    
+
     // Create the confirmation UI with progress animation
     mainContentDiv.innerHTML = `
         <div class="intent-confirmation-content">
@@ -1618,7 +1803,7 @@ function updateIntentConfirmation(element, intent) {
     };
 
     const intentLabel = intentLabels[intent] || 'General';
-    
+
     element.mainContentDiv.innerHTML = `
         <div class="intent-confirmation-content confirmed">
             <div class="intent-confirmation-icon">✓</div>
