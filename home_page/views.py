@@ -1346,8 +1346,62 @@ def chat_process(request):
                             
                     # If time is provided, filter by time as well
                     if time_str and matches:
-                        # ... time filtering logic ...
-                        pass
+                        try:
+                            # Try to parse time_str (e.g. "10am", "14:00")
+                            # We'll use a simple heuristic or dateutil if available, but for now let's try basic parsing
+                            # or rely on the fact that 'start' param from AI might be normalized to HH:MM
+                            
+                            # Normalize time_str to HH:MM if possible
+                            filter_hour = None
+                            filter_minute = None
+                            
+                            # Simple 12h/24h parsing
+                            ts = time_str.lower().replace(' ', '')
+                            import re
+                            # Match 10am, 10:30pm, 14:00, 14
+                            time_match = re.match(r'(\d{1,2})(?::(\d{2}))?([ap]m)?', ts)
+                            if time_match:
+                                h = int(time_match.group(1))
+                                m = int(time_match.group(2) or 0)
+                                ampm = time_match.group(3)
+                                
+                                if ampm:
+                                    if ampm == 'pm' and h < 12:
+                                        h += 12
+                                    elif ampm == 'am' and h == 12:
+                                        h = 0
+                                
+                                filter_hour = h
+                                filter_minute = m
+                                
+                                # Filter matches
+                                time_filtered = []
+                                for evt in matches:
+                                    # event['start'] is a dict with 'dateTime' or 'date'
+                                    start_dt_str = evt.get('start', {}).get('dateTime')
+                                    if start_dt_str:
+                                        evt_dt = datetime.fromisoformat(start_dt_str.replace('Z', '+00:00'))
+                                        # Convert to local time if needed, but for now let's just compare hours/minutes
+                                        # Ideally we should convert both to the same timezone.
+                                        # Assuming event times are in user's local time or we can extract hour/minute from the string directly
+                                        # if it has offset.
+                                        
+                                        # Let's use the simple approach: check if the event starts around the requested time
+                                        # We need to handle timezone conversion properly if possible.
+                                        # But often 'dateTime' includes offset.
+                                        
+                                        # Better: Convert event time to local user time (client_tz)
+                                        evt_dt_local = evt_dt.astimezone(tz)
+                                        
+                                        # fuzzy match: within 15 mins?
+                                        if evt_dt_local.hour == filter_hour and abs(evt_dt_local.minute - filter_minute) < 15:
+                                            time_filtered.append(evt)
+                                
+                                if time_filtered:
+                                    matches = time_filtered
+                        except Exception as e:
+                            print(f"Error filtering by time: {e}")
+                            pass
                     
                     if len(matches) == 1:
                         event = matches[0]
@@ -1408,37 +1462,7 @@ def chat_process(request):
                     except Exception:
                         tz = get_current_timezone()
 
-                    def _parse_simple_date(val: str):
-                        if not val:
-                            return None
-                        s = str(val).strip().lower()
-                        # YYYY-MM-DD
-                        import re as _re
-                        if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
-                            try:
-                                return datetime.fromisoformat(s + 'T00:00:00').date()
-                            except Exception:
-                                return None
-                        today = datetime.now(tz).date()
-                        if s == 'today':
-                            return today
-                        if s == 'tomorrow':
-                            return today + timedelta(days=1)
-                        weekdays = {
-                            'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
-                            'friday': 4, 'saturday': 5, 'sunday': 6
-                        }
-                        parts = s.split()
-                        prefix_next = (len(parts) == 2 and parts[0] == 'next' and parts[1] in weekdays)
-                        if prefix_next or s in weekdays:
-                            target_idx = weekdays[parts[1]] if prefix_next else weekdays[s]
-                            delta = (target_idx - today.weekday()) % 7
-                            if delta == 0 and prefix_next:
-                                delta = 7
-                            if delta < 0:
-                                delta += 7
-                            return today + timedelta(days=delta)
-                        return None
+
 
                     # Anchor to current/relative week if the user asked for it,
                     # even if the AI returned stale absolute dates.
