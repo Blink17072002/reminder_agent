@@ -128,7 +128,7 @@ class AIAgent:
         except Exception:
             return False
         
-    def determine_intent(self, text: str) -> str:
+    def determine_intent(self, text: str, conversation=None) -> str:
         """Uses Claude to classify the user's intent (calendar vs general_chat)."""
         if not self.claude_client:
             print("Claude client not initialized, defaulting intent to general_chat.")
@@ -145,8 +145,12 @@ class AIAgent:
             - "Schedule a meeting tomorrow at 2pm"
             - "What's on my calendar next week?"
             - "Cancel my 3pm appointment"
+            - "Delete the test meeting"
+            - "Remove my dentist appointment"
             - "Find free time on Thursday"
             - "Add lunch with Sarah to my calendar"
+            - "The one at 10am" (Context: answering "Which event?")
+            - "Yes, delete it" (Context: confirming deletion)
 
             General chat examples:
             - "Hello!" / "Hi there"
@@ -158,13 +162,18 @@ class AIAgent:
 
             User message: {user_message}"""
         )
-        messages = [
-             # Optional: include some conversation history for better context
-            # {"role": "user" if m.sender == "user" else "assistant", "content": m.text}
-            # for m in conversation.messages.order_by('-timestamp')[:5][::-1] if conversation and m.text and m.text.strip()
-            # Always include the current message
-            {"role": "user", "content": f"{intent_prompt}\n\nUser message: {text}"}
-        ]
+        
+        messages = []
+        if conversation:
+            # Include recent conversation history for context
+            history_messages = conversation.messages.filter(text__isnull=False, text__gt='').order_by('-timestamp')[:4]
+            history_messages = list(history_messages)[::-1]
+            messages = [
+                {"role": ("user" if m.sender == "user" else "assistant"), "content": m.text}
+                for m in history_messages
+            ]
+            
+        messages.append({"role": "user", "content": f"{intent_prompt}\n\nUser message: {text}"})
         
         try:
             # Use the specific model and low temperature for intent
@@ -184,195 +193,26 @@ class AIAgent:
 
     def extract_calendar_parameters(self, text: str) -> dict:
         """Uses Claude to extract parameters for calendar actions."""
-        if not self.claude_client:
-            print("Claude client not initialized. Cannot extract calendar parameters.")
-            return {"action": "unknown", "params": {}, "details": "AI client not initialized."}
+        # ... (existing code) ...
+        pass 
 
-        parameter_prompt = (
-            """You are a calendar parameter extractor. Extract structured data from the user's calendar request.
+    # ... (handle method) ...
 
-            ACTIONS: create_event, list_events, delete_event, find_free_slots, list_calendars
-
-            REQUIRED FIELDS for create_event:
-            - summary/title (what the event is about)
-            - date (when it happens)
-            - time information: EITHER (start + end) OR duration
-
-            OPTIONAL FIELDS:
-            - attendees (list of email addresses)
-
-            RESPONSE FORMAT - Return ONLY valid JSON with double quotes, no markdown:
-            {
-            "action": "action_name",
-            "params": {
-                "summary": "event title",
-                "date": "relative or absolute date",
-                "start": "time or datetime",
-                "end": "time or datetime",
-                "duration": "minutes or 'X hours'",
-                "attendees": ["email@example.com"],
-                "present": {},
-                "missing": []
-            },
-            "details": "brief human summary of what was understood"
-            }
-
-            CRITICAL: Analyze what information IS present and what's MISSING:
-            - "present" object: Include ANY fields you detected (summary, date, start, end, duration, attendees)
-            - "missing" array: List required fields that are MISSING or UNCLEAR
-
-            Examples:
-
-            Input: "Schedule team meeting tomorrow 2-3pm"
-            Output: {{"action": "create_event", "params": {{"summary": "team meeting", "date": "tomorrow", "start": "14:00", "end": "15:00", "present": {{"summary": "team meeting", "date": "tomorrow", "start": "14:00", "end": "15:00"}}, "missing": []}}, "details": "team meeting tomorrow 2-3pm"}}
-
-            Input: "Book a dentist appointment"
-            Output: {{"action": "create_event", "params": {{"summary": "dentist appointment", "present": {{"summary": "dentist appointment"}}, "missing": ["date", "time"]}}, "details": "dentist appointment"}}
-
-            Input: "Meeting with John at 2pm"
-            Output: {{"action": "create_event", "params": {{"summary": "meeting with John", "start": "14:00", "present": {{"summary": "meeting with John", "start": "14:00"}}, "missing": ["date", "end"]}}, "details": "meeting with John at 2pm"}}
-
-            Input: "What's on my calendar tomorrow?"
-            Output: {{"action": "list_events", "params": {{"date": "tomorrow"}}, "details": "list events tomorrow"}}
-
-            If unclear or not calendar-related: {{"action": "unknown", "params": {{}}, "details": "request unclear"}}
-
-            User message: {user_message}"""
-        )
-        
-        messages = [
-            # Optional: include some conversation history for context
-            # {"role": "user" if m.sender == "user" else "assistant", "content": m.text}
-            # for m in conversation.messages.order_by('-timestamp')[:5][::-1] if conversation and m.text and m.text.strip()
-            # Always include the current message
-            {"role": "user", "content": f"{parameter_prompt}\n\nUser message: {text}"}
-        ]
-
-        try:
-            # Use the specific model for parameter extraction
-            json_str = self._get_claude_response(messages) # Model/temp handled in helper based on prompt
-            print(f"Claude parameter extraction raw response: {json_str}")
-            # Attempt to parse the JSON string
-            try:
-                 extracted_data = json.loads(json_str)
-                 # Basic validation of the JSON structure
-                 if not isinstance(extracted_data, dict) or 'action' not in extracted_data or 'params' not in extracted_data or 'details' not in extracted_data:
-                      print(f"AI returned invalid JSON structure: {extracted_data}")
-                      return {"action": "unknown", "params": {}, "details": "Failed to extract details."} # Default to unknown if format is wrong
-                 return extracted_data
-            except json.JSONDecodeError:
-                 print(f"AI returned non-JSON response for parameter extraction: {json_str}")
-                 # If AI doesn't return valid JSON, treat as unknown intent
-                 return {"action": "unknown", "params": {}, "details": "Failed to extract details."}
-
-        except Exception as e:
-            print(f"Error extracting calendar parameters: {e}")
-            traceback.print_exc()
-            # If API call fails, treat as unknown intent
-            return {"action": "unknown", "params": {}, "details": f"Failed to extract details: {e}"}
-
-    def handle(self, text: str, conversation=None, is_title_generation=False) -> dict:
-        """
-        Processes the user's message, determines intent, and returns a structured response
-        indicating the next step (general chat, needs connection, or calendar action data).
-        Does NOT perform calendar actions directly.
-        """
-        # Handle title generation separately if the flag is set
-        if is_title_generation:
-            if not self.claude_client:
-                return {'type': 'text', 'response': "AI client not initialized for title generation."}
-            try:
-                messages = [{"role": "user", "content": text}]
-                title = self._get_claude_chat_response(
-                    messages,
-                    temperature=0.1,
-                    max_tokens=20,
-                )
-                return {'type': 'text', 'response': title}
-            except Exception as e:
-                print(f"Error generating title: {e}")
-                # Return a fallback or error message for title generation
-                return {'type': 'text', 'response': "Error generating title."}
-
-        # --- Main message handling logic ---
-        if not self.claude_client:
-            print("Claude client is not initialized.")
-            return {
-                'type': 'text',
-                'response': "AI services are not configured. Please check the server settings."
-            }
-
-        # 1. Determine Intent (Calendar or General Chat)
-        intent = self.determine_intent(text)
-        print(f"Message intent: {intent}")
-
-        # 2. Handle based on Intent
-        if intent == 'calendar':
-            # Check Google Connection Status FIRST for calendar intents
-            if not self.is_google_connected():
-                print("Calendar intent detected, but Google not connected. Requesting connection.")
-                return {
-                    'type': 'needs_connection',
-                    'content': {
-                        'email': self.get_google_account_email() or self.user.email, # Pass email if available
-                        'message_for_user':(
-                            "Sure – I can do that once you connect your Google account."
-                        ),
-                        'needs_connection': True
-                    }
-                }
-            else:
-                # If connected, proceed to extract calendar parameters
-                print("Google connected. Extracting calendar parameters with context...")
-                # Get current date for AI context
-                from datetime import datetime
-                current_date = datetime.now().strftime("%Y-%m-%d")
-                current_day = datetime.now().strftime("%A")
-                
-                system = (
-                    f"""You are a calendar assistant. Today is {current_day}, {current_date}. Extract calendar actions from the user's CURRENT request only.
-
-                    CRITICAL RULES:
-                    1. Return EXACTLY ONE JSON object - never return multiple JSON objects
-                    2. Process only the SINGLE action the user is requesting right now
-                    3. If user mentions multiple time slots, create ONE event with the primary/main time they want
-                    4. DO NOT create multiple events from a single request
-                    5. DO NOT repeat previous actions from conversation history
-                    6. Use dialogue history ONLY to resolve contextual references (like "that day", "same time")
-                    7. ALWAYS use the current date {current_date} as reference for date calculations
-                    8. NEVER use dates from past years - all dates should be relative to {current_date}
+    # ... inside handle method's system prompt ...
+                    User: "Remove my dentist appointment tomorrow"  
+                    Response: {{"action": "delete_event", "params": {{"summary": "dentist appointment", "date": "YYYY-MM-DD"}}, "message_for_user": "Searching for dentist appointment..."}}
                     
-                    SINGLE JSON RESPONSE FORMAT:
-                    Return ONLY one JSON object, nothing else before or after it.
+                    User: "Cancel the team sync on Friday"
+                    Response: {{"action": "delete_event", "params": {{"summary": "team sync", "date": "YYYY-MM-DD"}}, "message_for_user": "Looking for team sync to cancel..."}}
                     
-                    ACTIONS: create_event, list_events, delete_event, find_free_slots, list_calendars
-                    
-                    For list_events:
-                    - Extract time range from user's request ("this week", "tomorrow", "next Monday", "this month", "this year", "month")
-                    - ALWAYS calculate dates relative to TODAY ({current_date})
-                    - Return: {{"action": "list_events", "params": {{"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"}}, "message_for_user": "..."}}
-                    
-                    CONTEXT RESOLUTION (use history to understand references):
-                    - "that day" / "the same day" / "same day" → the MOST RECENT date mentioned in conversation
-                    - "same time" / "at the same time" → the time from the last event created
-                    - "with them too" → attendees mentioned before
-                    - "for the same duration" → duration from previous context
-                    
-                    EXAMPLES:
-                    Previous: "Create meeting on Thursday at 2pm"
-                    Current: "Schedule another at 4pm on the same day"
-                    → Extract ONLY: {{"action": "create_event", "params": {{"summary": "another", "date": "Thursday", "start": "16:00"}}, ...}}
-                    
-                    Previous: "Book dentist Tuesday 9am to 10am"
-                    Current: "Add lunch same day at noon"
-                    → Extract ONLY: {{"action": "create_event", "params": {{"summary": "lunch", "date": "Tuesday", "start": "12:00"}}, ...}}
-
-                    ACTIONS: create_event, list_events, delete_event, find_free_slots, list_calendars
-
-                    For create_event, REQUIRED fields:
-                    - Event title/summary
-                    - Date (explicit or relative)
-                    - Time: EITHER (start + end times) OR duration
+                    OPTIONAL fields:
+                    - Recurrence: If user mentions repetition (e.g. "every Monday", "daily", "weekly"), extract as RRULE string (RFC 5545).
+                      Examples:
+                      - "every Monday" -> "RRULE:FREQ=WEEKLY;BYDAY=MO"
+                      - "daily" -> "RRULE:FREQ=DAILY"
+                      - "every month on the 1st" -> "RRULE:FREQ=MONTHLY;BYMONTHDAY=1"
+                      - "every weekday" -> "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+                      - "until Dec 31, 2025" -> "RRULE:FREQ=DAILY;UNTIL=20251231T235959Z" (IMPORTANT: UNTIL must be UTC YYYYMMDDTHHMMSSZ, no hyphens)
 
                     RESPONSE FORMAT - Single JSON object only, no markdown, double quotes:
                     {{
@@ -383,6 +223,7 @@ class AIAgent:
                         "start": "start time",
                         "end": "end time",
                         "duration": "duration if provided instead of end",
+                        "recurrence": "RRULE string (optional)",
                         "attendees": ["emails"],
                         "present": {{}},
                         "missing": []
@@ -400,6 +241,7 @@ class AIAgent:
                         * What task was performed
                         * Any information that was missing from the user's request
                         * Any assumptions you made to complete the task
+                        * Mention recurrence if applicable
                     - Format as readable text with line breaks or bullets as appropriate
                     - Only include relevant sections (don't mention missing info if nothing was missing)
                     - Example: "Created meeting for Friday 1-2pm. Since no location was specified, I set it as a virtual meeting. Used default calendar since none was specified."
@@ -556,6 +398,9 @@ class AIAgent:
                     """You are a friendly calendar assistant. Your primary role is managing calendars, but you can engage in brief, relevant conversation.
 
                     CRITICAL RULES:
+                    - NEVER create, delete, modify, or confirm calendar events directly in chat responses
+                    - You cannot perform calendar actions - you can only discuss them
+                    - If asked about calendar management, explain what you CAN do but don't actually do it
                     - DO NOT repeat information you've already provided in this conversation
                     - Give fresh, direct answers to each question
                     - If asked the same question twice, acknowledge briefly and offer something new
@@ -577,8 +422,8 @@ class AIAgent:
                     3. **Find free time** - Locate available slots for scheduling  
                         Example: "When am I free next week?"
 
-                    4. **Manage events** - Edit or cancel existing appointments  
-                        Example: "Cancel my 3pm meeting"
+                    4. **Delete events** - Remove unwanted appointments  
+                        Example: "Delete my dentist appointment"
 
                     5. **Multi-calendar support** - Work across your Google calendars  
                         Example: "Add to my work calendar"

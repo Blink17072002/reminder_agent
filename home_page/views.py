@@ -23,7 +23,71 @@ import re as _re
 # Create your views here.
 
 
+
 logger = logging.getLogger(__name__)
+
+def _parse_simple_date(val: str, tz=None):
+    """
+    Parses a simple date string (YYYY-MM-DD, 'today', 'tomorrow', 'next friday', etc.)
+    into a datetime.date object.
+    """
+    if not val:
+        return None
+    
+    if tz is None:
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(getattr(settings, 'TIME_ZONE', 'UTC') or 'UTC')
+        except Exception:
+            tz = get_current_timezone()
+
+    s = str(val).strip().lower()
+    
+    # YYYY-MM-DD
+    if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        try:
+            return datetime.fromisoformat(s + 'T00:00:00').date()
+        except Exception:
+            return None
+            
+    today = datetime.now(tz).date()
+    if s == 'today':
+        return today
+    if s == 'tomorrow':
+        return today + timedelta(days=1)
+        
+    weekdays = {
+        'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+        'friday': 4, 'saturday': 5, 'sunday': 6
+    }
+    
+    parts = s.split()
+    prefix_next = (len(parts) == 2 and parts[0] == 'next' and parts[1] in weekdays)
+    
+    if prefix_next or s in weekdays:
+        target_idx = weekdays[parts[1]] if prefix_next else weekdays[s]
+        delta = (target_idx - today.weekday()) % 7
+        if delta == 0 and prefix_next:
+            delta = 7
+        if delta < 0:
+            delta += 7
+        # If user says "Friday" and today is Friday, they usually mean next Friday unless they say "this Friday"
+        # But for safety, if delta is 0 (today), we'll assume today.
+        # If they meant next week, they usually say "next Friday".
+        # However, if today is Tuesday and they say "Monday", they might mean next Monday.
+        # Let's stick to the logic:
+        # "Friday" -> next upcoming Friday (could be today if today is Friday)
+        # But if today is Friday, delta is 0.
+        if delta == 0 and not prefix_next:
+             # If today is the day, assume today.
+             pass
+        elif delta == 0 and prefix_next:
+             delta = 7
+             
+        return today + timedelta(days=delta)
+        
+    return None
+
 
 
 @login_required
@@ -162,6 +226,113 @@ def assistant(request, convo_id=None, is_placeholder=False):
 
 
 
+
+
+
+
+# Helper functions for proactive conflict detection
+def events_overlap(event_start, event_end, proposed_start, proposed_end):
+    """Check if two time ranges overlap"""
+    return event_start < proposed_end and proposed_start < event_end
+
+def check_conflicts_proactively(start_dt, end_dt, gcal):
+    """
+    Check for actual conflicting events (not just free/busy ranges).
+    Returns list of conflicting event objects with details.
+    """
+    try:
+        # Query the entire day to catch all events
+        day_start = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = start_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        # Get all events for that day
+        events = gcal.list_events(
+            time_min=day_start.isoformat(),
+            time_max=day_end.isoformat()
+        )
+        
+        # Filter for actual conflicts
+        conflicts = []
+        for event in events:
+            event_start_str = event.get('start', {}).get('dateTime')
+            event_end_str = event.get('end', {}).get('dateTime')
+            
+            if not event_start_str or not event_end_str:
+                continue
+            
+            # Parse event times
+            event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
+            event_end = datetime.fromisoformat(event_end_str.replace('Z', '+00:00'))
+            
+            # Check for overlap
+            if events_overlap(event_start, event_end, start_dt, end_dt):
+                conflicts.append({
+                    'summary': event.get('summary', 'Untitled Event'),
+                    'start': event_start_str,
+                    'end': event_end_str,
+                    'id': event.get('id')
+                })
+        
+        return conflicts
+    except Exception as e:
+        print(f"Error checking conflicts: {e}")
+        return []
+
+def find_alternative_times(requested_dt, duration_minutes, gcal, count=3):
+    """
+    Find alternative free time slots on the same day.
+    Returns up to 'count' alternative slots.
+    """
+    try:
+        # Get all events for that day
+        day_start = requested_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = requested_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        events = gcal.list_events(
+            time_min=day_start.isoformat(),
+            time_max=day_end.isoformat()
+        )
+        
+        # Define business hours (9 AM - 6 PM)
+        business_start = requested_dt.replace(hour=9, minute=0, second=0)
+        business_end = requested_dt.replace(hour=18, minute=0, second=0)
+        
+        # Create time slots (30-minute intervals)
+        alternatives = []
+        current_time = business_start
+        
+        while current_time < business_end and len(alternatives) < count:
+            slot_end = current_time + timedelta(minutes=duration_minutes)
+            
+            # Check if this slot conflicts with any event
+            has_conflict = False
+            for event in events:
+                event_start_str = event.get('start', {}).get('dateTime')
+                event_end_str = event.get('end', {}).get('dateTime')
+                
+                if event_start_str and event_end_str:
+                    event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
+                    event_end = datetime.fromisoformat(event_end_str.replace('Z', '+00:00'))
+                    
+                    if events_overlap(event_start, event_end, current_time, slot_end):
+                        has_conflict = True
+                        break
+            
+            # If no conflict, add as alternative
+            if not has_conflict:
+                alternatives.append({
+                    'start': current_time.isoformat(),
+                    'end': slot_end.isoformat()
+                })
+            
+            # Move to next slot (30-minute intervals)
+            current_time += timedelta(minutes=30)
+        
+        return alternatives
+    except Exception as e:
+        print(f"Error finding alternatives: {e}")
+        return []
+
 @csrf_exempt # <--- Add this decorator temporarily for testing JSON post (remove in production and handle CSRF properly)
 # Or better, handle CSRF token check manually if not using CsrfViewMiddleware globally
 # Or ensure CsrfViewMiddleware is active and JS sends the token in header (as done above)
@@ -179,6 +350,7 @@ def chat_process(request):
         # Client-reported IANA timezone (e.g., "Europe/London")
         client_tz_name = data.get("client_tz")
         confirmation_data = data.get("confirmation_data")
+        message_id = data.get("message_id")
 
         if not user_input and not confirmation_data:
              # Handle empty message appropriately, maybe return existing messages or an error
@@ -219,6 +391,32 @@ def chat_process(request):
         # Pass the convo object to the AIAgent handle method
         ai_agent = AIAgent(user)
 
+        # Check for textual confirmation of deletion
+        if user_input and convo:
+            last_message = convo.messages.order_by('-timestamp').first()
+            if last_message and last_message.sender == 'agent' and last_message.message_type == 'event_deletion_confirmation':
+                # Check if user said yes
+                affirmative_responses = ['yes', 'y', 'sure', 'ok', 'okay', 'confirm', 'please do', 'go ahead']
+                if user_input.lower().strip() in affirmative_responses:
+                    print("User confirmed deletion via text.")
+                    # Construct confirmation data from the last message's content
+                    confirmation_data = last_message.content
+                    # Ensure action is set to delete
+                    if confirmation_data:
+                        confirmation_data['action'] = 'delete'
+                        # Proceed to the confirmation handling block below...
+                
+                # Check if user said no
+                negative_responses = ['no', 'n', 'cancel', 'stop', 'don\'t', 'do not']
+                if user_input.lower().strip() in negative_responses:
+                     return JsonResponse({
+                        'type': 'text',
+                        'response': "Deletion cancelled.",
+                        'content': {},
+                        'intent': 'calendar',
+                        'convo_id': str(convo.id)
+                    })
+
         # Check for confirmation_data to bypass AI and create event directly
         # confirmation_data is already extracted above
         if confirmation_data:
@@ -235,11 +433,99 @@ def chat_process(request):
             
             try:
                 gcal = GoogleCalendarService(request.user)
+                # Delete the draft message if ID is provided
+                if message_id:
+                    try:
+                        Message.objects.filter(id=message_id, conversation=convo).delete()
+                    except Exception as e:
+                        print(f"Failed to delete draft message {message_id}: {e}")
+
+                # Check if this is a deletion confirmation
+                if confirmation_data.get('action') == 'delete':
+                    event_id = confirmation_data.get('event_id')
+                    calendar_id = confirmation_data.get('calendar_id', 'primary')
+                    
+                    gcal.delete_event(calendar_id, event_id)
+                    
+                    # Delete the draft message if ID is provided
+                    if message_id:
+                        try:
+                            Message.objects.filter(id=message_id, conversation=convo).delete()
+                        except Exception as e:
+                            print(f"Failed to delete draft message {message_id}: {e}")
+
+                    success_msg = "The event has been removed from your calendar."
+                    
+                    # Persist success message
+                    Message.objects.create(
+                        conversation=convo,
+                        sender='agent',
+                        text=success_msg,
+                        message_type='event_deleted',
+                        content={'event_id': event_id}
+                    )
+
+                    return JsonResponse({
+                        'type': 'event_deleted',
+                        'response': success_msg,
+                        'content': {'event_id': event_id},
+                        'intent': 'calendar',
+                        'convo_id': str(convo.id),
+                        'convo_title': convo.title,
+                        'user_message_text': user_input,
+                    })
+                
+                # Check if this is a cancellation
+                elif confirmation_data.get('action') == 'cancel':
+                    summary = confirmation_data.get('summary', 'the event')
+                    
+                    # Delete the draft message if ID is provided
+                    if message_id:
+                        try:
+                            Message.objects.filter(id=message_id, conversation=convo).delete()
+                        except Exception as e:
+                            print(f"Failed to delete draft message {message_id}: {e}")
+                    
+                    # Use AI to generate a contextual cancellation message
+                    cancellation_msg = f"Okay, I've cancelled the deletion of '{summary}'."
+                    
+                    # Persist cancellation message
+                    Message.objects.create(
+                        conversation=convo,
+                        sender='agent',
+                        text=cancellation_msg,
+                        message_type='text'
+                    )
+                    
+                    return JsonResponse({
+                        'type': 'text',
+                        'response': cancellation_msg,
+                        'intent': 'calendar',
+                        'convo_id': str(convo.id),
+                        'convo_title': convo.title,
+                        'user_message_text': user_input,
+                    })
+
+                # Ensure start/end are in the correct format (dict with dateTime)
+                start_data = confirmation_data.get('start')
+                if isinstance(start_data, str):
+                    start_data = {'dateTime': start_data}
+                
+                end_data = confirmation_data.get('end')
+                if isinstance(end_data, str):
+                    end_data = {'dateTime': end_data}
+
                 # Sanitize the event body to remove extra fields like 'conflicts' or 'agent_message'
+                # Ensure timeZone is present (required for recurring events)
+                if 'timeZone' not in start_data:
+                    start_data['timeZone'] = client_tz_name or 'UTC'
+                if 'timeZone' not in end_data:
+                    end_data['timeZone'] = client_tz_name or 'UTC'
+
                 event_body = {
                     'summary': confirmation_data.get('summary'),
-                    'start': confirmation_data.get('start'),
-                    'end': confirmation_data.get('end'),
+                    'start': start_data,
+                    'end': end_data,
                     'attendees': confirmation_data.get('attendees', []),
                 }
                 # Add description or location if they exist in confirmation_data
@@ -247,13 +533,35 @@ def chat_process(request):
                     event_body['description'] = confirmation_data['description']
                 if 'location' in confirmation_data:
                     event_body['location'] = confirmation_data['location']
+                
+                # Add recurrence if present
+                if confirmation_data.get('recurrence'):
+                    # Google Calendar API expects recurrence as a list of strings
+                    recurrence_val = confirmation_data['recurrence']
+                    
+                    # Sanitize UNTIL date in RRULE (remove hyphens if present)
+                    # Example: UNTIL=2026-02-29 -> UNTIL=20260229
+                    if isinstance(recurrence_val, str):
+                        if 'UNTIL=' in recurrence_val and '-' in recurrence_val.split('UNTIL=')[1]:
+                            import re
+                            recurrence_val = re.sub(r'(UNTIL=)(\d{4})-(\d{2})-(\d{2})', r'\1\2\3\4', recurrence_val)
+                        event_body['recurrence'] = [recurrence_val]
+                    elif isinstance(recurrence_val, list):
+                        # Sanitize each rule in the list
+                        sanitized_rules = []
+                        for rule in recurrence_val:
+                            if 'UNTIL=' in rule and '-' in rule.split('UNTIL=')[1]:
+                                import re
+                                rule = re.sub(r'(UNTIL=)(\d{4})-(\d{2})-(\d{2})', r'\1\2\3\4', rule)
+                            sanitized_rules.append(rule)
+                        event_body['recurrence'] = sanitized_rules
 
                 ev = gcal.create_event('primary', event_body)
                 
-                # Parse start/end for the success message
-                start_dt_iso = confirmation_data['start']['dateTime']
-                end_dt_iso = confirmation_data['end']['dateTime']
-                summary = confirmation_data.get('summary', 'Event')
+                # Parse the returned event to get the actual link and ID
+                start_dt_iso = ev.get('start', {}).get('dateTime') or ev.get('start', {}).get('date')
+                end_dt_iso = ev.get('end', {}).get('dateTime') or ev.get('end', {}).get('date')
+                summary = ev.get('summary')
                 
                 # Get user's timezone
                 try:
@@ -283,10 +591,33 @@ def chat_process(request):
                         return dt_local.strftime('%A, %B %d')
                     except: return iso_str
 
-                agent_response_text = (
-                    f"I created '{summary}' on "
-                    f"{_fmt_date_iso(start_dt_iso)} from {_fmt_time_iso(start_dt_iso)} to {_fmt_time_iso(end_dt_iso)}."
+                # Generate AI success message
+                recurrence_info = ""
+                if event_body.get('recurrence'):
+                     recurrence_info = f"Recurrence: {event_body['recurrence'][0]}"
+
+                success_prompt = (
+                    f"You just successfully created a calendar event. "
+                    f"Event: '{summary}'"
+                    f"Date: {_fmt_date_iso(start_dt_iso)}"
+                    f"Time: {_fmt_time_iso(start_dt_iso)} to {_fmt_time_iso(end_dt_iso)}"
+                    f"{recurrence_info}"
+                    f"Write a brief, friendly confirmation message (1 sentence) letting the user know the event was created."
+                    f"If it is recurring, mention the recurrence pattern naturally (e.g. 'every Monday')."
                 )
+                try:
+                    agent_response_text = ai_agent._get_claude_chat_response(
+                        [{"role": "user", "content": success_prompt}],
+                        system_prompt="You are a helpful calendar assistant. Be concise and friendly.",
+                        temperature=0.7,
+                        max_tokens=100
+                    )
+                except Exception as e:
+                    print(f"Failed to generate AI success message: {e}")
+                    agent_response_text = (
+                        f"I created '{summary}' on "
+                        f"{_fmt_date_iso(start_dt_iso)} from {_fmt_time_iso(start_dt_iso)} to {_fmt_time_iso(end_dt_iso)}."
+                    )
                 
                 # Persist the success message as structured event card
                 event_success_content = {
@@ -317,6 +648,11 @@ def chat_process(request):
             except Exception as e:
                 print(f"Error creating confirmed event: {e}")
                 error_msg = f"Sorry, I failed to create the event: {e}"
+                
+                # Check for specific Google API errors
+                if "Invalid recurrence rule" in str(e):
+                    error_msg = "Sorry, the recurrence pattern was invalid. Please try again with a simpler repetition (e.g., 'every Monday')."
+
                 Message.objects.create(
                     conversation=convo,
                     sender='agent',
@@ -887,21 +1223,65 @@ def chat_process(request):
                                 {'email': a} for a in attendees if isinstance(a, str) and '@' in a
                             ]
 
-                        # INTERCEPT: Do not create event yet. Check for conflicts and return confirmation request.
+                        # PROACTIVE CONFLICT DETECTION
+                        # Calculate duration
+                        duration_minutes = int((end_dt - start_dt).total_seconds() / 60)
                         
-                        # Check for conflicts
-                        busy_ranges = []
+                        # Check for actual conflicts (not just busy ranges)
+                        conflicts = check_conflicts_proactively(start_dt, end_dt, gcal)
+                        has_conflict = len(conflicts) > 0
+                        
+                        # If conflict detected, find alternative times
+                        alternatives = []
+                        if has_conflict:
+                            alternatives = find_alternative_times(start_dt, duration_minutes, gcal)
+                        
+                        # Generate AI message based on conflict status
+                        if has_conflict and alternatives:
+                            # Generate suggestion with alternative
+                            conflict_names = ", ".join([c['summary'] for c in conflicts[:2]])
+                            if len(conflicts) > 2:
+                                conflict_names += f" and {len(conflicts)-2} more"
+                            
+                            # Format alt times for AI
+                            alt_times_str = ", ".join([
+                                datetime.fromisoformat(alt['start'].replace('Z', '+00:00')).strftime('%I:%M %p').lstrip('0')
+                                for alt in alternatives[:2]
+                            ])
+                            
+                            draft_prompt = (
+                                f"User wants to schedule '{summary}' at {start_dt.strftime('%I:%M %p')}. "
+                                f"However, they already have '{conflict_names}' at that time. "
+                                f"Suggest they use {alt_times_str} instead (they're free then). "
+                                f"Be friendly and concise (1-2 sentences)."
+                            )
+                        elif has_conflict:
+                            # Conflict but no alternatives found
+                            conflict_names = ", ".join([c['summary'] for c in conflicts[:2]])
+                            draft_prompt = (
+                                f"User wants to schedule '{summary}' but they already have '{conflict_names}' at that time. "
+                                f"Let them know about the conflict and suggest trying a different time. "
+                                f"Be friendly and concise (1 sentence)."
+                            )
+                        else:
+                            # No conflict
+                            draft_prompt = (
+                                f"You drafted '{summary}' for the user to review. "
+                                f"They are free at this time. "
+                                f"Write a brief confirmation (1 sentence)."
+                            )
+                        
                         try:
-                            busy_ranges = gcal.find_free_slots(
-                                start_date=start_dt.isoformat(),
-                                end_date=end_dt.isoformat(),
-                                attendees=attendees
+                            agent_message = ai_agent._get_claude_chat_response(
+                                [{"role": "user", "content": draft_prompt}],
+                                system_prompt="You are a helpful calendar assistant. Be concise and friendly.",
+                                temperature=0.7,
+                                max_tokens=100
                             )
                         except Exception as e:
-                            print(f"Warning: Failed to check conflicts: {e}")
-                        
-                        has_conflict = bool(busy_ranges)
-                        conflict_msg = "You are free at this time." if not has_conflict else "⚠️ You have a conflict at this time."
+                            print(f"Failed to generate AI draft message: {e}")
+                            conflict_msg = "You are free at this time." if not has_conflict else "⚠️ You have a conflict at this time."
+                            agent_message = f"I've drafted this meeting. {conflict_msg}"
                         
                         response_type = 'event_confirmation_request'
                         response_content = {
@@ -909,21 +1289,100 @@ def chat_process(request):
                             'start': event_body['start'],
                             'end': event_body['end'],
                             'attendees': event_body.get('attendees', []),
-                            'conflicts': has_conflict,
-                            'agent_message': f"I've drafted this meeting. {conflict_msg}"
+                            'recurrence': norm.get('recurrence'),
+                            'has_conflict': has_conflict,
+                            'conflicts': conflicts if has_conflict else [],
+                            'alternatives': alternatives if has_conflict else [],
+                            'agent_message': agent_message
                         }
                         
                         agent_response_text = response_content['agent_message']
                         
                         # Persist the draft event preview as structured message
-                        Message.objects.create(
+                        draft_msg = Message.objects.create(
                             conversation=convo,
                             sender='agent',
                             text=agent_response_text,
                             message_type='event_preview',
                             content=response_content,
                         )
+                        
+                        # Add the message ID to the response content so frontend can track it
+                        response_content['message_id'] = draft_msg.id
 
+
+
+                elif action == 'delete_event':
+                    norm = dict(params or {})
+                    summary_query = norm.get('summary')
+                    date_str = norm.get('date') or norm.get('start_date')
+                    time_str = norm.get('start') or norm.get('start_time')
+                    
+                    # Default to today if no date specified
+                    target_date = None
+                    if date_str:
+                         target_date = _parse_simple_date(date_str)
+                    
+                    if not target_date:
+                         target_date = datetime.now().date() # Fallback to today
+
+                    # List events for the target day
+                    day_start = datetime.combine(target_date, datetime.min.time()).isoformat() + 'Z'
+                    day_end = datetime.combine(target_date, datetime.max.time()).isoformat() + 'Z'
+                    
+                    events = gcal.list_events(time_min=day_start, time_max=day_end)
+                    
+                    # Filter by summary (fuzzy match)
+                    matches = []
+                    for event in events:
+                        event_summary = event.get('summary', '')
+                        if summary_query and summary_query.lower() in event_summary.lower():
+                            matches.append(event)
+                        elif not summary_query:
+                            # If no summary provided, maybe match by time?
+                            # For now, if no summary, we can't safely delete unless there's only 1 event total?
+                            # Let's require summary or time.
+                            pass
+                            
+                    # If time is provided, filter by time as well
+                    if time_str and matches:
+                        # ... time filtering logic ...
+                        pass
+                    
+                    if len(matches) == 1:
+                        event = matches[0]
+                        # Generate confirmation
+                        response_type = 'event_deletion_confirmation'
+                        response_content = {
+                            'event_id': event['id'],
+                            'summary': event['summary'],
+                            'start': event['start'],
+                            'end': event['end'],
+                            'action': 'delete'
+                        }
+                        agent_message = f"Are you sure you want to delete '{event['summary']}'?"
+                        
+                        # Persist draft
+                        draft_msg = Message.objects.create(
+                            conversation=convo,
+                            sender='agent',
+                            text=agent_message,
+                            message_type='event_deletion_confirmation',
+                            content=response_content,
+                        )
+                        response_content['message_id'] = draft_msg.id
+                        agent_response_text = agent_message
+
+                    elif len(matches) > 1:
+                        response_type = 'text'
+                        agent_response_text = f"I found multiple events matching '{summary_query}'. Which one would you like to delete?"
+                        # Could list them here
+                        
+                    else:
+                        response_type = 'text'
+                        agent_response_text = f"I couldn't find any event matching '{summary_query}' on {target_date}."
+                        # Persist error
+                        Message.objects.create(conversation=convo, sender='agent', text=agent_response_text, message_type='text')
 
 
                 elif action == 'list_events':

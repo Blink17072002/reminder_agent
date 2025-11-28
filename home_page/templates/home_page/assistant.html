@@ -103,6 +103,45 @@
                       <div class="create-event-subtitle success">Event created successfully</div>
                    </div>
                 </div>
+                {% if msg.text %}
+                  <div class="bubble" style="margin-top: 8px;">
+                    {{ msg.text|linebreaksbr }}
+                  </div>
+                {% endif %}
+              {% elif msg.message_type == 'event_preview' %}
+                {# Container for event preview card - JavaScript will hydrate this into an interactive card #}
+                <div class="event-preview-card-container" 
+                     data-event-content="{{ msg.content_json|escape }}"
+                     data-convo-id="{% if current_convo %}{{ current_convo.id }}{% endif %}"
+                     data-message-id="{{ msg.id }}">
+                </div>
+              {% elif msg.message_type == 'event_deletion_confirmation' %}
+                 {# Container for deletion confirmation - JavaScript will hydrate this #}
+                 <div class="event-deletion-card-container"
+                      data-event-content="{{ msg.content_json|escape }}"
+                      data-convo-id="{% if current_convo %}{{ current_convo.id }}{% endif %}"
+                      data-message-id="{{ msg.id }}">
+                 </div>
+                 {% if msg.text %}
+                    <div class="bubble" style="margin-top: 8px;">
+                        {{ msg.text|linebreaksbr }}
+                    </div>
+                 {% endif %}
+              {% elif msg.message_type == 'event_deleted' %}
+                 {# Static HTML for deleted event card #}
+                 <div style="background: #1e1e1e; border: 1px solid #333; border-radius: 12px; padding: 16px; color: #fff; display: flex; align-items: center; gap: 12px;">
+                    <div style="background: #333; border-radius: 50%; padding: 8px;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#aaa" stroke-width="2">
+                            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2-2v2" />
+                        </svg>
+                    </div>
+                    <div style="font-weight: 600;">Event Deleted</div>
+                </div>
+                {% if msg.text %}
+                    <div class="bubble" style="margin-top: 8px;">
+                        {{ msg.text|linebreaksbr }}
+                    </div>
+                 {% endif %}
               {% else %}
                 {% if msg.text %}
                   <div class="bubble" {% if msg.sender == "agent" %}data-raw="{{ msg.text|escape }}"{% endif %} {% if is_new_conversation_page and forloop.first and msg.sender == "agent" %}data-welcome-message="true"{% endif %}>

@@ -14,22 +14,57 @@ marked.setOptions({
 const googleCalendarIconUrl = document.body.dataset.googleCalendarIconUrl; // Assuming data-google-calendar-icon-url on body
 const googleConnectUrl = document.body.dataset.googleConnectUrl || '/accounts/google/login/'; // Assuming data-google-connect-url on body, fallback
 
-// Initialize persisted event cards on page load
-(function initializePersistedEventCards() {
-    // Find all event preview card containers
-    const previewContainers = document.querySelectorAll('.event-preview-card-container');
-    previewContainers.forEach(container => {
-        try {
-            const eventContent = JSON.parse(container.dataset.eventContent);
-            const convoId = container.dataset.convoId;
-            if (eventContent && convoId) {
-                renderEventPreview(container, eventContent, convoId);
+// --- Status Indicator System ---
+let currentStatusIndicator = null;
+
+function showStatus(message, type = 'loading') {
+    // Remove previous status if exists
+    if (currentStatusIndicator) {
+        currentStatusIndicator.remove();
+    }
+    
+    const chatMessages = document.getElementById('chat-messages');
+    if (!chatMessages) return;
+    
+    const statusDiv = document.createElement('div');
+    statusDiv.className = `status-indicator status-${type}`;
+    statusDiv.innerHTML = `
+        ${type === 'loading' ? '<div class="spinner"></div>' : ''}
+        ${type === 'success' ? '<span class="status-icon">✓</span>' : ''}
+        ${type === 'warning' ? '<span class="status-icon">⚠</span>' : ''}
+        <span class="status-text">${message}</span>
+    `;
+    
+    chatMessages.appendChild(statusDiv);
+    currentStatusIndicator = statusDiv;
+    
+    // Auto-scroll to show status
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    
+    // Auto-remove success/warning after 2 seconds
+    if (type === 'success' || type === 'warning') {
+        setTimeout(() => {
+            if (statusDiv.parentElement) {
+                statusDiv.style.opacity = '0';
+                setTimeout(() => statusDiv.remove(), 300);
             }
-        } catch (e) {
-            console.error('Failed to parse event preview content:', e);
-        }
-    });
-})();
+            if (currentStatusIndicator === statusDiv) {
+                currentStatusIndicator = null;
+            }
+        }, 2000);
+    }
+    
+    return statusDiv;
+}
+
+function clearStatus() {
+    if (currentStatusIndicator) {
+        currentStatusIndicator.remove();
+        currentStatusIndicator = null;
+    }
+}
+
+
 
 
 // --- Sidebar Toggle ---
@@ -295,7 +330,57 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
             renderEventSuccess(contentContainer, responseData);
 
         } else if (responseType === 'event_confirmation_request') {
-            renderEventPreview(contentContainer, responseContent, convoId);
+            renderEventPreview(contentContainer, responseContent, convoId, responseContent.message_id);
+
+        } else if (responseType === 'event_deletion_confirmation') {
+            renderEventDeletionConfirmation(contentContainer, responseContent, convoId, responseContent.message_id);
+            
+            // Add agent message text alongside the card if present
+            if (responseData?.response) {
+                const textBubble = document.createElement('div');
+                textBubble.className = 'bubble';
+                textBubble.style.marginTop = '8px';
+                textBubble.innerHTML = marked.parse(responseData.response);
+                
+                // Find message-content or create it
+                let messageContent = messageDiv.querySelector('.message-content');
+                if (!messageContent) {
+                    messageContent = document.createElement('div');
+                    messageContent.classList.add('message-content');
+                    messageDiv.appendChild(messageContent);
+                }
+                messageContent.appendChild(textBubble);
+            }
+
+        } else if (responseType === 'event_deleted') {
+            contentContainer.classList.remove("bubble");
+            contentContainer.innerHTML = `
+                <div style="background: #1e1e1e; border: 1px solid #333; border-radius: 12px; padding: 16px; color: #fff; display: flex; align-items: center; gap: 12px;">
+                    <div style="background: #333; border-radius: 50%; padding: 8px;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#aaa" stroke-width="2">
+                            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        </svg>
+                    </div>
+                    <div style="font-weight: 600;">Event Deleted</div>
+                </div>
+            `;
+            
+            // Add agent message text alongside the card if present
+            if (responseData?.response) {
+                const textBubble = document.createElement('div');
+                textBubble.className = 'bubble';
+                textBubble.style.marginTop = '8px';
+                textBubble.innerHTML = marked.parse(responseData.response);
+                
+                // Find message-content or create it
+                let messageContent = messageDiv.querySelector('.message-content');
+                if (!messageContent) {
+                    messageContent = document.createElement('div');
+                    messageContent.classList.add('message-content');
+                    messageDiv.appendChild(messageContent);
+                }
+                messageContent.appendChild(textBubble);
+            }
 
         } else if (responseType === 'needs_connection') {
             // Keep the bubble styling so it aligns with the agent avatar
@@ -347,8 +432,15 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
 
         // Append messageDiv and contentContainer if they are new
         if (!placeholderElement) {
+            // Create message-content wrapper
+            const messageContent = document.createElement('div');
+            messageContent.classList.add('message-content');
+            
+            // Add contentContainer to message-content
+            messageContent.appendChild(contentContainer);
+            
             // Avatar prepended earlier if needed
-            messageDiv.appendChild(contentContainer);
+            messageDiv.appendChild(messageContent);
             chatMessagesContainer.appendChild(messageDiv);
         }
 
@@ -515,7 +607,84 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    function renderEventPreview(container, content, convoId) {
+    function renderEventDeletionConfirmation(container, content, convoId, messageId) {
+        container.classList.remove("bubble");
+        
+        // Handle start date/time safely
+        let dateStr = "Unknown Date";
+        let timeStr = "";
+        
+        try {
+            const startVal = content.start.dateTime || content.start.date;
+            if (startVal) {
+                const d = new Date(startVal);
+                dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+                if (content.start.dateTime) {
+                    timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+                }
+            }
+        } catch (e) {
+            console.error("Error parsing date for deletion card", e);
+        }
+
+        const html = `
+            <div class="event-preview-card delete-confirmation" style="background: #2d1f1f; border: 1px solid #5c2b2b; border-radius: 12px; padding: 16px; margin-top: 8px; color: #fff; font-family: sans-serif;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <span style="background: #5c2b2b; color: #ff9999; padding: 2px 8px; border-radius: 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 1px;">Delete Event</span>
+                </div>
+                
+                <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 600;">${escapeHtml(content.summary)}</h3>
+                
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; color: #ccc; font-size: 14px;">
+                    <span>📅</span>
+                    <span>${dateStr} ${timeStr ? '• ' + timeStr : ''}</span>
+                </div>
+                
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn-delete-confirm" style="flex: 1; background: #d93025; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500;">Delete</button>
+                    <button class="btn-cancel" style="flex: 1; background: #333; color: white; border: 1px solid #555; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Cancel</button>
+                </div>
+            </div>
+        `;
+        
+        container.innerHTML = html;
+        
+        const deleteBtn = container.querySelector('.btn-delete-confirm');
+        const cancelBtn = container.querySelector('.btn-cancel');
+        
+        if (deleteBtn) {
+            deleteBtn.onclick = () => {
+                deleteBtn.textContent = "Deleting...";
+                deleteBtn.disabled = true;
+                if (cancelBtn) cancelBtn.disabled = true;
+                
+                const submissionData = {
+                    action: 'delete',
+                    event_id: content.event_id,
+                    calendar_id: 'primary'
+                };
+                
+                submitConfirmation(submissionData, convoId, container, messageId);
+            };
+        }
+        
+        if (cancelBtn) {
+            cancelBtn.onclick = () => {
+                cancelBtn.textContent = "Cancelling...";
+                cancelBtn.disabled = true;
+                if (deleteBtn) deleteBtn.disabled = true;
+
+                const submissionData = {
+                    action: 'cancel',
+                    event_id: content.event_id, // Pass event ID just in case, though not strictly needed for cancel
+                    summary: content.summary
+                };
+                submitConfirmation(submissionData, convoId, container, messageId);
+            };
+        }
+    }
+
+    function renderEventPreview(container, content, convoId, messageId) {
         container.classList.remove("bubble");
         let isEditMode = false;
 
@@ -574,11 +743,32 @@ document.addEventListener("DOMContentLoaded", () => {
                     <span class="display-time">${startTimeStr} - ${endTimeStr}</span>
                 `}
             </div>
+
+            ${content.recurrence ? `
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; color: #ccc; font-size: 14px;">
+                <span>🔁</span>
+                <span class="display-recurrence" style="font-size: 13px; color: #aaa;">${escapeHtml(content.recurrence.replace('RRULE:', '').replace(/;/g, ', '))}</span>
+            </div>
+            ` : ''}
             
-            <div style="margin-bottom: 16px; font-size: 13px; display: flex; align-items: center; gap: 6px;">
-                ${content.conflicts
-                    ? '<span style="color: #ff6b6b;">⚠️ Conflict detected</span>'
+            <div style="margin-bottom: 16px; font-size: 13px; display: flex; align-items: flex-start; gap: 6px; flex-direction: column;">
+                ${content.has_conflict && content.conflicts && content.conflicts.length > 0
+                    ? `<div style="display: flex; align-items: center; gap: 6px; color: #ff6b6b;">
+                        <span>⚠️ Conflict:</span>
+                        <span style="font-weight: 500;">${content.conflicts.map(c => c.summary).join(', ')}</span>
+                      </div>`
                     : '<span style="color: #4ec9b0;">✅ You are free</span>'}
+                ${content.alternatives && content.alternatives.length > 0
+                    ? `<div style="font-size: 12px; margin-top: 8px;">
+                        <div style="color: #888; margin-bottom: 6px;">Suggested times:</div>
+                        <div class="alternatives-container" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                            ${content.alternatives.slice(0, 3).map((alt, index) => {
+                                const time = new Date(alt.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+                                return `<button class="alt-time-btn" data-alt-index="${index}" style="background: #333; color: white; border: 1px solid #555; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px;">${time}</button>`;
+                            }).join('')}
+                        </div>
+                      </div>`
+                    : ''}
             </div>
             
             <div style="display: flex; gap: 10px;">
@@ -639,9 +829,16 @@ document.addEventListener("DOMContentLoaded", () => {
                                 currentData.start = new Date(`${dateValue}T${startTime24}`);
                                 currentData.end = new Date(`${dateValue}T${endTime24}`);
 
-                                // Update ISO format for submission
-                                currentData.startISO = { dateTime: currentData.start.toISOString() };
-                                currentData.endISO = { dateTime: currentData.end.toISOString() };
+                                // Update ISO format for submission, preserving timezone if available
+                                const tz = content.start.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+                                currentData.startISO = { 
+                                    dateTime: currentData.start.toISOString(),
+                                    timeZone: tz
+                                };
+                                currentData.endISO = { 
+                                    dateTime: currentData.end.toISOString(),
+                                    timeZone: tz
+                                };
                             }
                         }
                     }
@@ -654,10 +851,11 @@ document.addEventListener("DOMContentLoaded", () => {
                         summary: currentData.summary,
                         start: currentData.startISO,
                         end: currentData.endISO,
-                        attendees: currentData.attendees
+                        attendees: currentData.attendees,
+                        recurrence: content.recurrence // Include recurrence in submission
                     };
 
-                    submitConfirmation(submissionData, convoId, container);
+                    submitConfirmation(submissionData, convoId, container, messageId);
                 };
             }
 
@@ -678,6 +876,40 @@ document.addEventListener("DOMContentLoaded", () => {
                     render();
                 };
             }
+            
+            // Add handlers for alternative time buttons
+            const altButtons = container.querySelectorAll('.alt-time-btn');
+            altButtons.forEach(btn => {
+                btn.onclick = () => {
+                    const altIndex = parseInt(btn.dataset.altIndex);
+                    const alternative = content.alternatives[altIndex];
+                    
+                    if (alternative) {
+                        // Update currentData with the alternative time
+                        currentData.startISO = { dateTime: alternative.start };
+                        currentData.endISO = { dateTime: alternative.end };
+                        
+                        // Parse the ISO strings to update start and end
+                        currentData.start = new Date(alternative.start);
+                        currentData.end = new Date(alternative.end);
+                        
+                        // Update content to reflect the new time
+                        content.start = { dateTime: alternative.start };
+                        content.end = { dateTime: alternative.end };
+                        
+                        // Clear conflicts since we're using a free time
+                        content.has_conflict = false;
+                        content.conflicts = [];
+                        content.alternatives = [];
+                        
+                        // Re-render to show updated time
+                        render();
+                        
+                        // Show a brief success message
+                        showStatus("Updated to suggested time", "success");
+                    }
+                };
+            });
         }
 
         // Initial render
@@ -693,7 +925,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
-    function submitConfirmation(eventData, convoId, container) {
+    function submitConfirmation(eventData, convoId, container, messageId) {
         const form = document.getElementById("chat-form");
         const postUrl = form.action;
         const csrfToken = form.querySelector("[name=csrfmiddlewaretoken]").value;
@@ -707,15 +939,63 @@ document.addEventListener("DOMContentLoaded", () => {
             body: JSON.stringify({
                 confirmation_data: eventData,
                 convo_id: convoId,
-                client_tz: Intl.DateTimeFormat().resolvedOptions().timeZone
+                client_tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                message_id: messageId
             }),
         })
             .then(response => response.json())
             .then(data => {
+                // Get the parent message div and message-content
+                const messageDiv = container.closest('.message');
+                const messageContent = container.closest('.message-content');
+                
                 if (data.type === 'event_success') {
                     // Clear preview and render success in the same container
                     container.innerHTML = '';
                     renderEventSuccess(container, data);
+                } else if (data.type === 'event_deleted') {
+                    // Clear preview and render deletion success
+                    container.innerHTML = '';
+                    container.innerHTML = `
+                        <div style="background: #1e1e1e; border: 1px solid #333; border-radius: 12px; padding: 16px; color: #fff; display: flex; align-items: center; gap: 12px;">
+                            <div style="background: #333; border-radius: 50%; padding: 8px;">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#aaa" stroke-width="2">
+                                    <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 2v2" />
+                                </svg>
+                            </div>
+                            <div style="font-weight: 600;">Event Deleted</div>
+                        </div>
+                    `;
+                    
+                    // Remove old text bubble and add new one if message exists
+                    if (messageContent) {
+                        // Remove any existing text bubbles within message-content
+                        const existingBubbles = messageContent.querySelectorAll('.bubble');
+                        existingBubbles.forEach(bubble => bubble.remove());
+                        
+                        // Add new text bubble if response exists
+                        if (data.response) {
+                            const textBubble = document.createElement('div');
+                            textBubble.className = 'bubble';
+                            textBubble.style.marginTop = '8px';
+                            textBubble.innerHTML = marked.parse(data.response);
+                            messageContent.appendChild(textBubble);
+                        }
+                    }
+                } else if (data.type === 'text') {
+                     // Handle text response (e.g. cancellation confirmation)
+                     // Replace the card with the text response
+                     container.innerHTML = '';
+                     container.classList.add('bubble');
+                     container.innerHTML = marked.parse(data.response);
+                     
+                     // Remove any other text bubbles since we're replacing with this one
+                     if (messageContent) {
+                         const existingBubbles = messageContent.querySelectorAll('.bubble');
+                         existingBubbles.forEach(bubble => {
+                             if (bubble !== container) bubble.remove();
+                         });
+                     }
                 } else {
                     // Handle error
                     const errorDiv = document.createElement('div');
@@ -728,6 +1008,42 @@ document.addEventListener("DOMContentLoaded", () => {
             .catch(err => console.error(err));
     }
 
+
+
+    // --- Initialize Persisted Event Cards ---
+    const previewContainers = document.querySelectorAll('.event-preview-card-container');
+    if (previewContainers.length > 0) {
+        console.log(`Found ${previewContainers.length} persisted event preview cards.`);
+        previewContainers.forEach(container => {
+            try {
+                const eventContent = JSON.parse(container.dataset.eventContent);
+                const convoId = container.dataset.convoId;
+                const messageId = container.dataset.messageId;
+                if (eventContent && convoId) {
+                    renderEventPreview(container, eventContent, convoId, messageId);
+                }
+            } catch (e) {
+                console.error('Failed to parse event preview content:', e);
+            }
+        });
+    }
+
+    const deletionContainers = document.querySelectorAll('.event-deletion-card-container');
+    if (deletionContainers.length > 0) {
+        console.log(`Found ${deletionContainers.length} persisted event deletion cards.`);
+        deletionContainers.forEach(container => {
+            try {
+                const eventContent = JSON.parse(container.dataset.eventContent);
+                const convoId = container.dataset.convoId;
+                const messageId = container.dataset.messageId;
+                if (eventContent && convoId) {
+                    renderEventDeletionConfirmation(container, eventContent, convoId, messageId);
+                }
+            } catch (e) {
+                console.error('Failed to parse event deletion content:', e);
+            }
+        });
+    }
 
     // --- Initial Page Load Rendering & Welcome Message Handling ---
     console.log("DOMContentLoaded: Checking for initial messages to render/animate.");
@@ -835,6 +1151,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // Show intent confirmation modal BEFORE processing
             const intentElement = showIntentConfirmation();
+            
+            // Show initial status
+            showStatus("Processing request...", "loading");
 
 
             try {
@@ -888,6 +1207,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     if (agentResponse) {
                         const responseType = agentResponse.type || 'text';
                         const responseContent = responseType === 'text' ? agentResponse.response : agentResponse.content;
+                        
+                        // Show calendar-specific status for event creation
+                        if (responseType === 'event_confirmation_request' || data.intent === 'calendar') {
+                            showStatus("Checking calendar for conflicts...", "loading");
+                        }
 
                         // Debug logging (remove when issues are resolved)
                         if (responseType === 'calendar_action_request' && responseContent?.action === 'unknown') {
@@ -936,7 +1260,10 @@ document.addEventListener("DOMContentLoaded", () => {
                                     intentElement.mainContentDiv.className = 'bubble'; // Replace all classes with bubble
 
                                     // Use typeText for typing animation directly on the main content div
-                                    typeText(intentElement.mainContentDiv, textContent, 3, scrollChatToBottom);
+                                    typeText(intentElement.mainContentDiv, textContent, 3, () => {
+                                        scrollChatToBottom();
+                                        clearStatus(); // Clear status after response is shown
+                                    });
 
                                 } else {
                                     // Handle other response types (calendar actions, etc.) directly
@@ -948,7 +1275,29 @@ document.addEventListener("DOMContentLoaded", () => {
                                         renderEventSuccess(intentElement.mainContentDiv, agentResponse);
 
                                     } else if (responseType === 'event_confirmation_request') {
-                                        renderEventPreview(intentElement.mainContentDiv, responseContent, data.convo_id);
+                                        renderEventPreview(intentElement.mainContentDiv, responseContent, data.convo_id, responseContent.message_id);
+
+                                    } else if (responseType === 'event_deletion_confirmation') {
+                                        renderEventDeletionConfirmation(intentElement.mainContentDiv, responseContent, data.convo_id, responseContent.message_id);
+                                        
+                                        // Add text bubble alongside the card if response text exists
+                                        if (agentResponse.response) {
+                                            // Wrap mainContentDiv in message-content if not already
+                                            let messageContent = intentElement.messageDiv.querySelector('.message-content');
+                                            if (!messageContent) {
+                                                messageContent = document.createElement('div');
+                                                messageContent.classList.add('message-content');
+                                                // Move mainContentDiv into message-content
+                                                intentElement.messageDiv.appendChild(messageContent);
+                                                messageContent.appendChild(intentElement.mainContentDiv);
+                                            }
+                                            
+                                            const textBubble = document.createElement('div');
+                                            textBubble.className = 'bubble';
+                                            textBubble.style.marginTop = '8px';
+                                            textBubble.innerHTML = marked.parse(agentResponse.response);
+                                            messageContent.appendChild(textBubble);
+                                        }
 
                                     } else if (responseType === 'needs_connection') {
                                         // Keep the bubble styling so it aligns with the agent avatar

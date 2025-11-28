@@ -8,3 +8,5 @@ virtual
 # ignore Google client JSON
 *.json
 EOF
+
+!/.vscode/settings.json
