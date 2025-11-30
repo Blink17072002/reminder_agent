@@ -2374,11 +2374,302 @@ def chat_process(request):
                     if not end_date and start_date:
                         end_date = start_date
 
+                    query = norm.get('query')
+
                     if not start_date and not end_date:
+                        # Default to current year as per user request
+                        today_local = datetime.now(tz).date()
+                        start_date = datetime(today_local.year, 1, 1).date().isoformat()
+                        end_date = datetime(today_local.year, 12, 31).date().isoformat()
+
+                    # Build RFC3339 boundaries in UTC 'Z'
+                    # Here we keep it simple by assuming all-day window(s)
+                    time_min = f"{start_date}T00:00:00Z"
+                    time_max = f"{end_date}T23:59:59Z"
+                    try:
+                        items = gcal.list_events('primary', time_min=time_min, time_max=time_max, q=query)
+
+                        def _fmt_when(ev):
+                            start = (ev.get('start') or {})
+                            end = (ev.get('end') or {})
+                            s = start.get('dateTime') or start.get('date')
+                            e = end.get('dateTime') or end.get('date')
+                            def _parse_dt(v):
+                                if not v:
+                                    return None
+                                if isinstance(v, str) and v.endswith('Z'):
+                                    v = v.replace('Z', '+00:00')
+                                try:
+                                    return datetime.fromisoformat(v)
+                                except Exception:
+                                    return None
+                            ds = _parse_dt(s)
+                            de = _parse_dt(e)
+                            try:
+                                # Localize for display
+                                if ds and ds.tzinfo:
+                                    ds_local = ds.astimezone(tz)
+                                elif ds:
+                                    ds_local = ds.replace(tzinfo=None)
+                                else:
+                                    ds_local = None
+                                if de and de.tzinfo:
+                                    de_local = de.astimezone(tz)
+                                elif de:
+                                    de_local = de.replace(tzinfo=None)
+                                else:
+                                    de_local = None
+                                if ds_local and de_local and ds_local.date() == de_local.date():
+                                    return f"{ds_local.strftime('%b %d, %Y')} • {ds_local.strftime('%I:%M %p').lstrip('0')} – {de_local.strftime('%I:%M %p').lstrip('0')}"
+                                if ds_local and de_local:
+                                    return f"{ds_local.strftime('%b %d %I:%M %p').lstrip('0')} → {de_local.strftime('%b %d %I:%M %p').lstrip('0')}"
+                                if ds_local:
+                                    return ds_local.strftime('%b %d, %Y')
+                                return ''
+                            except Exception:
+                                return ''
+
+                        if not items:
+                            when_text = start_date if start_date == end_date else f"{start_date} to {end_date}"
+                            summary = f"You have no events on {when_text}."
+                        else:
+                            # Group events by day
+                            from collections import defaultdict
+                            events_by_day = defaultdict(list)
+                            
+                            def _parse_event_date(ev):
+                                """Extract date from event for grouping"""
+                                start = (ev.get('start') or {})
+                                s = start.get('dateTime') or start.get('date')
+                                if not s:
+                                    return None
+                                if isinstance(s, str) and s.endswith('Z'):
+                                    s = s.replace('Z', '+00:00')
+                                try:
+                                    dt = datetime.fromisoformat(s)
+                                    if dt.tzinfo:
+                                        dt = dt.astimezone(tz)
+                                    return dt.date()
+                                except Exception:
+                                    return None
+                            
+                            def _format_event_time(ev):
+                                """Format event time range for display"""
+                                start = (ev.get('start') or {})
+                                end = (ev.get('end') or {})
+                                s = start.get('dateTime') or start.get('date')
+                                e = end.get('dateTime') or end.get('date')
+                                
+                                def _parse_dt(v):
+                                    if not v:
+                                        return None
+                                    if isinstance(v, str) and v.endswith('Z'):
+                                        v = v.replace('Z', '+00:00')
+                                    try:
+                                        return datetime.fromisoformat(v)
+                                    except Exception:
+                                        return None
+                                
+                                ds = _parse_dt(s)
+                                de = _parse_dt(e)
+                                
+                                try:
+                                    # Localize for display
+                                    if ds and ds.tzinfo:
+                                        ds_local = ds.astimezone(tz)
+                                    elif ds:
+                                        ds_local = ds
+                                    else:
+                                        ds_local = None
+                                    if de and de.tzinfo:
+                                        de_local = de.astimezone(tz)
+                                    elif de:
+                                        de_local = de
+                                    else:
+                                        de_local = None
+                                    
+                                    if ds_local and de_local:
+                                        return f"{ds_local.strftime('%I:%M %p').lstrip('0')} - {de_local.strftime('%I:%M %p').lstrip('0')}"
+                                    elif ds_local:
+                                        return ds_local.strftime('%I:%M %p').lstrip('0')
+                                    return ''
+                                except Exception:
+                                    return ''
+                            
+                            # Group events by day
+                            for ev in items:
+                                event_date = _parse_event_date(ev)
+                                if event_date:
+                                    events_by_day[event_date].append(ev)
+                            
+                            # Determine the time range type (day/week/month/year)
+                            try:
+                                start_dt = datetime.fromisoformat(start_date + 'T00:00:00').date()
+                                end_dt = datetime.fromisoformat(end_date + 'T00:00:00').date()
+                                day_span = (end_dt - start_dt).days + 1
+                                
+                                # Classify the range
+                                if day_span == 1:
+                                    range_type = 'day'
+                                elif day_span <= 7:
+                                    range_type = 'week'
+                                elif day_span <= 31:
+                                    range_type = 'month'
+                                else:
+                                    range_type = 'year'
+                            except Exception:
+                                range_type = 'week'  # Default fallback
+                            
+                            # Build formatted output
+                            lines = []
+                            
+                            # Add header with date range
+                            try:
+                                start_dt = datetime.fromisoformat(start_date + 'T00:00:00').date()
+                                end_dt = datetime.fromisoformat(end_date + 'T00:00:00').date()
+                                
+                                # Format header based on range type
+                                if range_type == 'day':
+                                    today_date = datetime.now(tz).date()
+                                    day_label = "Today's Schedule" if start_dt == today_date else f"Schedule for {start_dt.strftime('%A, %B %d, %Y')}"
+                                    lines.append(f"📅 {day_label}\n")
+                                elif range_type == 'week':
+                                    if start_dt.month == end_dt.month and start_dt.year == end_dt.year:
+                                        date_range = f"{start_dt.strftime('%B')} {start_dt.day}-{end_dt.day}, {start_dt.year}"
+                                    else:
+                                        date_range = f"{start_dt.strftime('%B %d')} - {end_dt.strftime('%B %d, %Y')}"
+                                    lines.append(f"📅 Your Weekly Schedule - {date_range}\n")
+                                elif range_type == 'month':
+                                    lines.append(f"📅 Your Schedule for {start_dt.strftime('%B %Y')}\n")
+                                else:  # year
+                                    lines.append(f"📅 Your Schedule for {start_dt.strftime('%Y')}\n")
+                            except Exception:
+                                lines.append("📅 Your Schedule\n")
+                            
+                            # Sort days chronologically
+                            sorted_days = sorted(events_by_day.keys())
+                            today_date = datetime.now(tz).date()
+                            
+                            for day in sorted_days:
+                                day_events = events_by_day[day]
+                                
+                                # Format day header (remove leading zero from day)
+                                day_name = day.strftime('%A, %B %d').replace(' 0', ' ')
+                                
+                                # Add (Today) indicator if applicable
+                                if day == today_date:
+                                    day_name += " (Today)"
+                                
+                                lines.append(f"**{day_name}**")
+                                
+                                # Add events for this day
+                                for ev in day_events:
+                                    title = ev.get('summary') or 'Untitled'
+                                    time_str = _format_event_time(ev)
+                                    lines.append(f"• {time_str}: {title}")
+                                
+                                lines.append("")  # Empty line between days
+                            
+                            # Add days with no events within the range (only for day and week views)
+                            if range_type in ['day', 'week']:
+                                try:
+                                    start_dt = datetime.fromisoformat(start_date + 'T00:00:00').date()
+                                    end_dt = datetime.fromisoformat(end_date + 'T00:00:00').date()
+                                    current_date = start_dt
+                                    
+                                    while current_date <= end_dt:
+                                        if current_date not in events_by_day:
+                                            day_name = current_date.strftime('%A, %B %d').replace(' 0', ' ')
+                                            if current_date == today_date:
+                                                day_name += " (Today)"
+                                            
+                                            # Insert in chronological order
+                                            inserted = False
+                                            for i, line in enumerate(lines):
+                                                if line.startswith('**'):
+                                                    line_date_str = line.strip('*').split(' (')[0]
+                                                    # Simple comparison - if this empty day should come before this line
+                                                    if current_date < _parse_event_date(items[0]) if items else False:
+                                                        lines.insert(i, f"**{day_name}**")
+                                                        lines.insert(i+1, "*(No events scheduled)*")
+                                                        lines.insert(i+2, "")
+                                                        inserted = True
+                                                        break
+                                            
+                                            if not inserted and current_date not in sorted_days:
+                                                lines.append(f"**{day_name}**")
+                                                lines.append("*(No events scheduled)*")
+                                                lines.append("")
+                                        
+                                        current_date += timedelta(days=1)
+                                except Exception:
+                                    pass
+                            
+                            summary = "\n".join(lines).strip()
+                            
+                            # Use AI to generate a personalized closing message
+                            try:
+                                # Build a summary of the events for the AI
+                                event_summary_parts = []
+                                for day, day_events in sorted(events_by_day.items()):
+                                    day_name = day.strftime('%A')
+                                    event_count = len(day_events)
+                                    event_titles = [ev.get('summary', 'Untitled') for ev in day_events[:3]]
+                                    event_summary_parts.append(f"{day_name}: {event_count} event(s) - {', '.join(event_titles)}")
+                                
+                                event_summary = "; ".join(event_summary_parts[:7])  # Limit to prevent token overflow
+                                
+                                # Determine if events are in past, present, or future
+                                today_date = datetime.now(tz).date()
+                                try:
+                                    start_dt = datetime.fromisoformat(start_date + 'T00:00:00').date()
+                                    end_dt = datetime.fromisoformat(end_date + 'T00:00:00').date()
+                                    
+                                    if end_dt < today_date:
+                                        time_context = "PAST events (already happened)"
+                                    elif start_dt > today_date:
+                                        time_context = "FUTURE events (upcoming)"
+                                    elif start_dt == today_date and end_dt == today_date:
+                                        time_context = "TODAY's events (current day)"
+                                    else:
+                                        time_context = "events spanning PAST, PRESENT, and/or FUTURE"
+                                except:
+                                    time_context = "events"
+                                
+                                ai_prompt = f"""The user just viewed their {range_type} schedule with {len(items)} total event(s). 
+    
+                                    CRITICAL: These are {time_context}. Your remark MUST reflect the correct time perspective.
+    
+                                    Events breakdown: {event_summary}
+    
+                                    Generate a friendly, personalized 1-2 sentence closing remark that:
+                                    - Uses appropriate tense: past events = "you had/were busy", present = "you have", future = "you've got/ahead"
+                                    - For PAST events, reflect on what they had scheduled (e.g., "Looks like you had a packed Monday")
+                                    - For FUTURE events, look forward to what's coming (e.g., "You've got a busy day ahead")
+                                    - For TODAY, use present tense (e.g., "You have a full schedule today")
+                                    - Acknowledges their schedule (busy/light/balanced)
+                                    - Mentions specific patterns if notable (e.g., "Friday was packed", "weekend is free")
+                                    - Offers help with scheduling
+                                    - Keep it warm and conversational
+                                    - Add an emoji if appropriate
+    
+                                    Do not repeat the event list. Just provide the closing remark."""
+    
+                                closing_messages = [{"role": "user", "content": ai_prompt}]
+                                closing_message = ai_agent._get_claude_chat_response(
+                                    closing_messages,
+                                    temperature=0.7,
+                                    max_tokens=100
+                                )
+                                
+                                if closing_message and closing_message.strip():
+                                    summary = summary + "\n\n" + closing_message.strip()
+                            except Exception as e:
+                                print(f"Failed to generate AI closing message: {e}")
+                                # Continue without closing message if AI fails
+    
                         response_type = 'text'
-                        agent_response_text = (
-                            "Please share a start date and end date, or say 'this week', so I can list your events."
-                        )
+                        agent_response_text = summary
                         try:
                             Message.objects.create(
                                 conversation=convo,
@@ -2389,316 +2680,17 @@ def chat_process(request):
                             )
                         except Exception:
                             pass
-                    else:
-                        # Build RFC3339 boundaries in UTC 'Z'
-                        # Here we keep it simple by assuming all-day window(s)
-                        time_min = f"{start_date}T00:00:00Z"
-                        time_max = f"{end_date}T23:59:59Z"
-                        try:
-                            items = gcal.list_events('primary', time_min=time_min, time_max=time_max)
-
-                            def _fmt_when(ev):
-                                start = (ev.get('start') or {})
-                                end = (ev.get('end') or {})
-                                s = start.get('dateTime') or start.get('date')
-                                e = end.get('dateTime') or end.get('date')
-                                def _parse_dt(v):
-                                    if not v:
-                                        return None
-                                    if isinstance(v, str) and v.endswith('Z'):
-                                        v = v.replace('Z', '+00:00')
-                                    try:
-                                        return datetime.fromisoformat(v)
-                                    except Exception:
-                                        return None
-                                ds = _parse_dt(s)
-                                de = _parse_dt(e)
-                                try:
-                                    # Localize for display
-                                    if ds and ds.tzinfo:
-                                        ds_local = ds.astimezone(tz)
-                                    elif ds:
-                                        ds_local = ds.replace(tzinfo=None)
-                                    else:
-                                        ds_local = None
-                                    if de and de.tzinfo:
-                                        de_local = de.astimezone(tz)
-                                    elif de:
-                                        de_local = de.replace(tzinfo=None)
-                                    else:
-                                        de_local = None
-                                    if ds_local and de_local and ds_local.date() == de_local.date():
-                                        return f"{ds_local.strftime('%b %d, %Y')} • {ds_local.strftime('%I:%M %p').lstrip('0')} – {de_local.strftime('%I:%M %p').lstrip('0')}"
-                                    if ds_local and de_local:
-                                        return f"{ds_local.strftime('%b %d %I:%M %p').lstrip('0')} → {de_local.strftime('%b %d %I:%M %p').lstrip('0')}"
-                                    if ds_local:
-                                        return ds_local.strftime('%b %d, %Y')
-                                    return ''
-                                except Exception:
-                                    return ''
-
-                            if not items:
-                                when_text = start_date if start_date == end_date else f"{start_date} to {end_date}"
-                                summary = f"You have no events on {when_text}."
-                            else:
-                                # Group events by day
-                                from collections import defaultdict
-                                events_by_day = defaultdict(list)
-                                
-                                def _parse_event_date(ev):
-                                    """Extract date from event for grouping"""
-                                    start = (ev.get('start') or {})
-                                    s = start.get('dateTime') or start.get('date')
-                                    if not s:
-                                        return None
-                                    if isinstance(s, str) and s.endswith('Z'):
-                                        s = s.replace('Z', '+00:00')
-                                    try:
-                                        dt = datetime.fromisoformat(s)
-                                        if dt.tzinfo:
-                                            dt = dt.astimezone(tz)
-                                        return dt.date()
-                                    except Exception:
-                                        return None
-                                
-                                def _format_event_time(ev):
-                                    """Format event time range for display"""
-                                    start = (ev.get('start') or {})
-                                    end = (ev.get('end') or {})
-                                    s = start.get('dateTime') or start.get('date')
-                                    e = end.get('dateTime') or end.get('date')
-                                    
-                                    def _parse_dt(v):
-                                        if not v:
-                                            return None
-                                        if isinstance(v, str) and v.endswith('Z'):
-                                            v = v.replace('Z', '+00:00')
-                                        try:
-                                            return datetime.fromisoformat(v)
-                                        except Exception:
-                                            return None
-                                    
-                                    ds = _parse_dt(s)
-                                    de = _parse_dt(e)
-                                    
-                                    try:
-                                        # Localize for display
-                                        if ds and ds.tzinfo:
-                                            ds_local = ds.astimezone(tz)
-                                        elif ds:
-                                            ds_local = ds
-                                        else:
-                                            ds_local = None
-                                        if de and de.tzinfo:
-                                            de_local = de.astimezone(tz)
-                                        elif de:
-                                            de_local = de
-                                        else:
-                                            de_local = None
-                                        
-                                        if ds_local and de_local:
-                                            return f"{ds_local.strftime('%I:%M %p').lstrip('0')} - {de_local.strftime('%I:%M %p').lstrip('0')}"
-                                        elif ds_local:
-                                            return ds_local.strftime('%I:%M %p').lstrip('0')
-                                        return ''
-                                    except Exception:
-                                        return ''
-                                
-                                # Group events by day
-                                for ev in items:
-                                    event_date = _parse_event_date(ev)
-                                    if event_date:
-                                        events_by_day[event_date].append(ev)
-                                
-                                # Determine the time range type (day/week/month/year)
-                                try:
-                                    start_dt = datetime.fromisoformat(start_date + 'T00:00:00').date()
-                                    end_dt = datetime.fromisoformat(end_date + 'T00:00:00').date()
-                                    day_span = (end_dt - start_dt).days + 1
-                                    
-                                    # Classify the range
-                                    if day_span == 1:
-                                        range_type = 'day'
-                                    elif day_span <= 7:
-                                        range_type = 'week'
-                                    elif day_span <= 31:
-                                        range_type = 'month'
-                                    else:
-                                        range_type = 'year'
-                                except Exception:
-                                    range_type = 'week'  # Default fallback
-                                
-                                # Build formatted output
-                                lines = []
-                                
-                                # Add header with date range
-                                try:
-                                    start_dt = datetime.fromisoformat(start_date + 'T00:00:00').date()
-                                    end_dt = datetime.fromisoformat(end_date + 'T00:00:00').date()
-                                    
-                                    # Format header based on range type
-                                    if range_type == 'day':
-                                        today_date = datetime.now(tz).date()
-                                        day_label = "Today's Schedule" if start_dt == today_date else f"Schedule for {start_dt.strftime('%A, %B %d, %Y')}"
-                                        lines.append(f"📅 {day_label}\n")
-                                    elif range_type == 'week':
-                                        if start_dt.month == end_dt.month and start_dt.year == end_dt.year:
-                                            date_range = f"{start_dt.strftime('%B')} {start_dt.day}-{end_dt.day}, {start_dt.year}"
-                                        else:
-                                            date_range = f"{start_dt.strftime('%B %d')} - {end_dt.strftime('%B %d, %Y')}"
-                                        lines.append(f"📅 Your Weekly Schedule - {date_range}\n")
-                                    elif range_type == 'month':
-                                        lines.append(f"📅 Your Schedule for {start_dt.strftime('%B %Y')}\n")
-                                    else:  # year
-                                        lines.append(f"📅 Your Schedule for {start_dt.strftime('%Y')}\n")
-                                except Exception:
-                                    lines.append("📅 Your Schedule\n")
-                                
-                                # Sort days chronologically
-                                sorted_days = sorted(events_by_day.keys())
-                                today_date = datetime.now(tz).date()
-                                
-                                for day in sorted_days:
-                                    day_events = events_by_day[day]
-                                    
-                                    # Format day header (remove leading zero from day)
-                                    day_name = day.strftime('%A, %B %d').replace(' 0', ' ')
-                                    
-                                    # Add (Today) indicator if applicable
-                                    if day == today_date:
-                                        day_name += " (Today)"
-                                    
-                                    lines.append(f"**{day_name}**")
-                                    
-                                    # Add events for this day
-                                    for ev in day_events:
-                                        title = ev.get('summary') or 'Untitled'
-                                        time_str = _format_event_time(ev)
-                                        lines.append(f"• {time_str}: {title}")
-                                    
-                                    lines.append("")  # Empty line between days
-                                
-                                # Add days with no events within the range (only for day and week views)
-                                if range_type in ['day', 'week']:
-                                    try:
-                                        start_dt = datetime.fromisoformat(start_date + 'T00:00:00').date()
-                                        end_dt = datetime.fromisoformat(end_date + 'T00:00:00').date()
-                                        current_date = start_dt
-                                        
-                                        while current_date <= end_dt:
-                                            if current_date not in events_by_day:
-                                                day_name = current_date.strftime('%A, %B %d').replace(' 0', ' ')
-                                                if current_date == today_date:
-                                                    day_name += " (Today)"
-                                                
-                                                # Insert in chronological order
-                                                inserted = False
-                                                for i, line in enumerate(lines):
-                                                    if line.startswith('**'):
-                                                        line_date_str = line.strip('*').split(' (')[0]
-                                                        # Simple comparison - if this empty day should come before this line
-                                                        if current_date < _parse_event_date(items[0]) if items else False:
-                                                            lines.insert(i, f"**{day_name}**")
-                                                            lines.insert(i+1, "*(No events scheduled)*")
-                                                            lines.insert(i+2, "")
-                                                            inserted = True
-                                                            break
-                                                
-                                                if not inserted and current_date not in sorted_days:
-                                                    lines.append(f"**{day_name}**")
-                                                    lines.append("*(No events scheduled)*")
-                                                    lines.append("")
-                                            
-                                            current_date += timedelta(days=1)
-                                    except Exception:
-                                        pass
-                                
-                                summary = "\n".join(lines).strip()
-                                
-                                # Use AI to generate a personalized closing message
-                                try:
-                                    # Build a summary of the events for the AI
-                                    event_summary_parts = []
-                                    for day, day_events in sorted(events_by_day.items()):
-                                        day_name = day.strftime('%A')
-                                        event_count = len(day_events)
-                                        event_titles = [ev.get('summary', 'Untitled') for ev in day_events[:3]]
-                                        event_summary_parts.append(f"{day_name}: {event_count} event(s) - {', '.join(event_titles)}")
-                                    
-                                    event_summary = "; ".join(event_summary_parts[:7])  # Limit to prevent token overflow
-                                    
-                                    # Determine if events are in past, present, or future
-                                    today_date = datetime.now(tz).date()
-                                    try:
-                                        start_dt = datetime.fromisoformat(start_date + 'T00:00:00').date()
-                                        end_dt = datetime.fromisoformat(end_date + 'T00:00:00').date()
-                                        
-                                        if end_dt < today_date:
-                                            time_context = "PAST events (already happened)"
-                                        elif start_dt > today_date:
-                                            time_context = "FUTURE events (upcoming)"
-                                        elif start_dt == today_date and end_dt == today_date:
-                                            time_context = "TODAY's events (current day)"
-                                        else:
-                                            time_context = "events spanning PAST, PRESENT, and/or FUTURE"
-                                    except:
-                                        time_context = "events"
-                                    
-                                    ai_prompt = f"""The user just viewed their {range_type} schedule with {len(items)} total event(s). 
-
-                                        CRITICAL: These are {time_context}. Your remark MUST reflect the correct time perspective.
-
-                                        Events breakdown: {event_summary}
-
-                                        Generate a friendly, personalized 1-2 sentence closing remark that:
-                                        - Uses appropriate tense: past events = "you had/were busy", present = "you have", future = "you've got/ahead"
-                                        - For PAST events, reflect on what they had scheduled (e.g., "Looks like you had a packed Monday")
-                                        - For FUTURE events, look forward to what's coming (e.g., "You've got a busy day ahead")
-                                        - For TODAY, use present tense (e.g., "You have a full schedule today")
-                                        - Acknowledges their schedule (busy/light/balanced)
-                                        - Mentions specific patterns if notable (e.g., "Friday was packed", "weekend is free")
-                                        - Offers help with scheduling
-                                        - Keep it warm and conversational
-                                        - Add an emoji if appropriate
-
-                                        Do not repeat the event list. Just provide the closing remark."""
-
-                                    closing_messages = [{"role": "user", "content": ai_prompt}]
-                                    closing_message = ai_agent._get_claude_chat_response(
-                                        closing_messages,
-                                        temperature=0.7,
-                                        max_tokens=100
-                                    )
-                                    
-                                    if closing_message and closing_message.strip():
-                                        summary = summary + "\n\n" + closing_message.strip()
-                                except Exception as e:
-                                    print(f"Failed to generate AI closing message: {e}")
-                                    # Continue without closing message if AI fails
-
-                            response_type = 'text'
-                            agent_response_text = summary
-                            try:
-                                Message.objects.create(
-                                    conversation=convo,
-                                    sender='agent',
-                                    text=agent_response_text,
-                                    message_type='text',
-                                    content=None,
-                                )
-                            except Exception:
-                                pass
-                        except Exception as e:
-                            response_type = 'text'
-                            agent_response_text = f"Sorry, I couldn't list events: {e}"
-                            # Always persist error messages so they survive reloads
-                            Message.objects.create(
-                                conversation=convo,
-                                sender='agent',
-                                text=agent_response_text,
-                                message_type='text',
-                                content=None,
-                            )
+                    except Exception as e:
+                        response_type = 'text'
+                        agent_response_text = f"Sorry, I couldn't list events: {e}"
+                        # Always persist error messages so they survive reloads
+                        Message.objects.create(
+                            conversation=convo,
+                            sender='agent',
+                            text=agent_response_text,
+                            message_type='text',
+                            content=None,
+                        )
 
                 # etc. (list_events, delete_event …)
 

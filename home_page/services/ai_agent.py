@@ -398,8 +398,9 @@ class AIAgent:
                     
                     For list_events:
                     - Extract time range from user's request ("this week", "tomorrow", "next Monday", "this month", "this year", "month")
+                    - Extract search terms/keywords if the user is looking for specific events (e.g. "standup", "meeting with John")
                     - ALWAYS calculate dates relative to TODAY ({current_date})
-                    - Return: {{"action": "list_events", "params": {{"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"}}, "message_for_user": "..."}}
+                    - Return: {{"action": "list_events", "params": {{"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "query": "search term"}}, "message_for_user": "..."}}
                     
                     CONTEXT RESOLUTION (use history to understand references):
                     - "that day" / "the same day" / "same day" → the MOST RECENT date mentioned in conversation

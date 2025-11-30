@@ -40,13 +40,14 @@ class GoogleCalendarService: # helper class to encapsulate Calendar API calls pe
         except Exception as e:
             raise Exception(f'Failed to initialize Google Calendar service: {e}')
 
-    def list_events(self, calendar_id='primary', time_min=None, time_max=None):
+    def list_events(self, calendar_id='primary', time_min=None, time_max=None, q=None):
         """List calendar events in a time period from time_min to time_max.
         
         Args:
             calendar_id: Calendar ID, defaults to 'primary'
             time_min: Minimum time (RFC3339), if None will search from far past
             time_max: Maximum time (RFC3339), if None will search far into future
+            q: Free text search terms to find events that match these terms
         """
         # Allow searching past events by not defaulting to 'now'
         # If time_min is not provided, use a date far in the past
@@ -63,6 +64,7 @@ class GoogleCalendarService: # helper class to encapsulate Calendar API calls pe
             calendarId=calendar_id,
             timeMin=time_min,
             timeMax=time_max,
+            q=q,
             singleEvents=True,
             orderBy='startTime'
         ).execute().get('items', [])
