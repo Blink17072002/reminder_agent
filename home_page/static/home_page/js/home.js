@@ -352,6 +352,56 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
                 messageContent.appendChild(textBubble);
             }
 
+        } else if (responseType === 'event_update_confirmation') {
+            renderEventUpdateConfirmation(contentContainer, responseContent, convoId, responseContent.message_id);
+            
+            // Add agent message text alongside the card if present
+            if (responseData?.response) {
+                const textBubble = document.createElement('div');
+                textBubble.className = 'bubble';
+                textBubble.style.marginTop = '8px';
+                textBubble.innerHTML = marked.parse(responseData.response);
+                
+                // Find message-content or create it
+                let messageContent = messageDiv.querySelector('.message-content');
+                if (!messageContent) {
+                    messageContent = document.createElement('div');
+                    messageContent.classList.add('message-content');
+                    messageDiv.appendChild(messageContent);
+                }
+                messageContent.appendChild(textBubble);
+            }
+
+        } else if (responseType === 'event_updated') {
+            contentContainer.classList.remove("bubble");
+            contentContainer.innerHTML = `
+                \u003cdiv style="background: #1e1e1e; border: 1px solid #333; border-radius: 12px; padding: 16px; color: #fff; display: flex; align-items: center; gap: 12px;"\u003e
+                    \u003cdiv style="background: #333; border-radius: 50%; padding: 8px;"\u003e
+                        \u003csvg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4CAF50" stroke-width="2"\u003e
+                            \u003cpath d="M20 6L9 17l-5-5" /\u003e
+                        \u003c/svg\u003e
+                    \u003c/div\u003e
+                    \u003cdiv style="font-weight: 600;"\u003eEvent Updated\u003c/div\u003e
+                \u003c/div\u003e
+            `;
+            
+            // Add agent message text alongside the card if present
+            if (responseData?.response) {
+                const textBubble = document.createElement('div');
+                textBubble.className = 'bubble';
+                textBubble.style.marginTop = '8px';
+                textBubble.innerHTML = marked.parse(responseData.response);
+                
+                // Find message-content or create it
+                let messageContent = messageDiv.querySelector('.message-content');
+                if (!messageContent) {
+                    messageContent = document.createElement('div');
+                    messageContent.classList.add('message-content');
+                    messageDiv.appendChild(messageContent);
+                }
+                messageContent.appendChild(textBubble);
+            }
+
         } else if (responseType === 'event_deleted') {
             contentContainer.classList.remove("bubble");
             contentContainer.innerHTML = `
@@ -552,6 +602,255 @@ function updateRecentsTitle(convoId, newTitle) {
 }
 
 
+// --- Helper Functions for Rendering Structured Content (Global Scope) ---
+
+function renderEventSuccess(container, responseData) {
+    // Remove bubble class for structured content
+    container.classList.remove("bubble");
+    const responseContent = responseData.content || responseData; // Handle both full data or just content
+    const eventTitle = responseContent?.event_title || responseData?.event_title || 'Your Event';
+    const agentExplanationText = responseContent?.agent_explanation || responseData.response || '';
+
+    const eventSuccessHtml = `
+         <div class="create-event-box">
+            <div class="create-event-icon">
+               ${googleCalendarIconUrl ? `<img src="${googleCalendarIconUrl}" alt="Google Calendar" width="24" height="24">` : ''}
+               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                 <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z" fill="#34A853"/>
+               </svg>
+            </div>
+            <div class="create-event-details">
+               <div class="create-event-title">${escapeHtml(eventTitle)}</div>
+               <div class="create-event-subtitle success">Event created successfully</div>
+             </div>
+         </div>
+      `;
+    container.innerHTML = eventSuccessHtml;
+    // Append a typed agent text bubble within the same message
+    if (agentExplanationText) {
+        const explainBubble = document.createElement('div');
+        explainBubble.classList.add('bubble');
+        explainBubble.style.marginTop = '8px';
+        container.appendChild(explainBubble);
+        typeText(explainBubble, agentExplanationText, 3, scrollChatToBottom);
+    }
+}
+
+function renderEventDeletionConfirmation(container, content, convoId, messageId) {
+    container.classList.remove("bubble");
+    
+    // Handle start date/time safely
+    let dateStr = "Unknown Date";
+    let timeStr = "";
+    
+    try {
+        const startVal = content.start.dateTime || content.start.date;
+        if (startVal) {
+            const d = new Date(startVal);
+            dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+            if (content.start.dateTime) {
+                timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+            }
+        }
+    } catch (e) {
+        console.error("Error parsing date for deletion card", e);
+    }
+
+    const html = `
+        <div class="event-preview-card delete-confirmation" style="background: #2d1f1f; border: 1px solid #5c2b2b; border-radius: 12px; padding: 16px; margin-top: 8px; color: #fff; font-family: sans-serif;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <span style="background: #5c2b2b; color: #ff9999; padding: 2px 8px; border-radius: 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 1px;">Delete Event</span>
+            </div>
+            
+            <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 600;">${escapeHtml(content.summary)}</h3>
+            
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; color: #ccc; font-size: 14px;">
+                <span>📅</span>
+                <span>${dateStr} ${timeStr ? '• ' + timeStr : ''}</span>
+            </div>
+            
+            <div style="display: flex; gap: 10px;">
+                <button class="btn-delete-confirm" style="flex: 1; background: #d93025; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500;">Delete</button>
+                <button class="btn-cancel" style="flex: 1; background: #333; color: white; border: 1px solid #555; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Cancel</button>
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+    
+    const deleteBtn = container.querySelector('.btn-delete-confirm');
+    const cancelBtn = container.querySelector('.btn-cancel');
+    
+    if (deleteBtn) {
+        deleteBtn.onclick = function() {
+            deleteBtn.textContent = "Deleting...";
+            deleteBtn.disabled = true;
+            if (cancelBtn) cancelBtn.disabled = true;
+            
+            const submissionData = {
+                action: 'delete',
+                event_id: content.event_id,
+                calendar_id: 'primary'
+            };
+            
+            submitConfirmation(submissionData, convoId, container, messageId);
+        };
+    }
+    
+    if (cancelBtn) {
+        cancelBtn.onclick = function() {
+            cancelBtn.textContent = "Cancelling...";
+            cancelBtn.disabled = true;
+            if (deleteBtn) deleteBtn.disabled = true;
+
+            const submissionData = {
+                action: 'cancel',
+                event_id: content.event_id,
+                summary: content.summary
+            };
+            submitConfirmation(submissionData, convoId, container, messageId);
+        };
+    }
+}
+
+function renderEventUpdateConfirmation(container, content, convoId, messageId) {
+    container.classList.remove("bubble");
+    
+    // Parse dates for original and updated events
+    function formatDateTime(dateObj) {
+        if (!dateObj) return { date: "Unknown", time: "" };
+        
+        try {
+            const dateVal = dateObj.dateTime || dateObj.date;
+            if (!dateVal) return { date: "Unknown", time: "" };
+            
+            const d = new Date(dateVal);
+            const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+            const timeStr = dateObj.dateTime ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : "";
+            
+            return { date: dateStr, time: timeStr };
+        } catch (e) {
+            console.error("Error parsing date", e);
+            return { date: "Unknown", time: "" };
+        }
+    }
+    
+    const original = content.original || {};
+    const updated = content.updated || {};
+    
+    const originalFormatted = formatDateTime(original.start);
+    const updatedFormatted = formatDateTime(updated.start);
+    
+    // Check what changed
+    const titleChanged = original.summary !== updated.summary;
+    const dateTimeChanged = JSON.stringify(original.start) !== JSON.stringify(updated.start);
+    
+    const hasConflict = content.has_conflict || false;
+    const conflicts = content.conflicts || [];
+    
+    const html = `
+        <div class="event-preview-card update-confirmation" style="background: #1e1e1e; border: 1px solid #4a7c59; border-radius: 12px; padding: 16px; margin-top: 8px; color: #fff; font-family: sans-serif;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <span style="background: #2d4a3e; color: #81c995; padding: 2px 8px; border-radius: 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 1px;">Update Event</span>
+            </div>
+            
+            ${hasConflict ? `
+                <div style="background: #5c2b2b; border: 1px solid #8b3a3a; border-radius: 8px; padding: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 18px;">⚠️</span>
+                    <div style="font-size: 13px; color: #ff9999;">
+                        <div style="font-weight: 600; margin-bottom: 4px;">Scheduling Conflict</div>
+                        <div style="color: #ffb3b3;">Conflicts with: ${conflicts.map(function(c) { return escapeHtml(c.summary); }).join(', ')}</div>
+                    </div>
+                </div>
+            ` : ''}
+            
+            <div style="display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; margin-bottom: 16px;">
+                <!-- Original -->
+                <div style="background: #2a2a2a; border-radius: 8px; padding: 12px;">
+                    <div style="font-size: 11px; color: #888; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Original</div>
+                    <h4 style="margin: 0 0 8px 0; font-size: 15px; font-weight: 600; ${titleChanged ? 'text-decoration: line-through; opacity: 0.6;' : ''}">${escapeHtml(original.summary || 'Untitled')}</h4>
+                    <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; color: #ccc; font-size: 13px; ${dateTimeChanged ? 'text-decoration: line-through; opacity: 0.6;' : ''}">
+                        <span>📅</span>
+                        <span>${originalFormatted.date}</span>
+                    </div>
+                    ${originalFormatted.time ? `
+                        <div style="display: flex; align-items: center; gap: 6px; color: #ccc; font-size: 13px; ${dateTimeChanged ? 'text-decoration: line-through; opacity: 0.6;' : ''}">
+                            <span>⏰</span>
+                            <span>${originalFormatted.time}</span>
+                        </div>
+                    ` : ''}
+                </div>
+                
+                <!-- Arrow -->
+                <div style="display: flex; align-items: center; justify-content: center;">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#81c995" stroke-width="2">
+                        <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                </div>
+                
+                <!-- Updated -->
+                <div style="background: #2d4a3e; border: 1px solid #4a7c59; border-radius: 8px; padding: 12px;">
+                    <div style="font-size: 11px; color: #81c995; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Updated</div>
+                    <h4 style="margin: 0 0 8px 0; font-size: 15px; font-weight: 600; color: #81c995;">${escapeHtml(updated.summary || 'Untitled')}</h4>
+                    <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; color: #b3e6c1; font-size: 13px;">
+                        <span>📅</span>
+                        <span>${updatedFormatted.date}</span>
+                    </div>
+                    ${updatedFormatted.time ? `
+                        <div style="display: flex; align-items: center; gap: 6px; color: #b3e6c1; font-size: 13px;">
+                            <span>⏰</span>
+                            <span>${updatedFormatted.time}</span>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 10px;">
+                <button class="btn-update-confirm" style="flex: 1; background: #4a7c59; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500;">Update</button>
+                <button class="btn-cancel" style="flex: 1; background: #333; color: white; border: 1px solid #555; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Cancel</button>
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+    
+    const updateBtn = container.querySelector('.btn-update-confirm');
+    const cancelBtn = container.querySelector('.btn-cancel');
+    
+    if (updateBtn) {
+        updateBtn.onclick = function() {
+            updateBtn.textContent = "Updating...";
+            updateBtn.disabled = true;
+            if (cancelBtn) cancelBtn.disabled = true;
+            
+            const submissionData = {
+                action: 'update',
+                event_id: content.event_id,
+                calendar_id: content.calendar_id || 'primary',
+                original: content.original,
+                updated: content.updated
+            };
+            
+            submitConfirmation(submissionData, convoId, container, messageId);
+        };
+    }
+    
+    if (cancelBtn) {
+        cancelBtn.onclick = function() {
+            cancelBtn.textContent = "Cancelling...";
+            cancelBtn.disabled = true;
+            if (updateBtn) updateBtn.disabled = true;
+
+            const submissionData = {
+                action: 'cancel',
+                event_id: content.event_id,
+                summary: original.summary
+            };
+            submitConfirmation(submissionData, convoId, container, messageId);
+        };
+    }
+}
+
 // --- Main DOMContentLoaded listener ---
 document.addEventListener("DOMContentLoaded", () => {
     const chatMessagesContainer = document.getElementById("chat-box"); // Use getElementById
@@ -678,6 +977,144 @@ document.addEventListener("DOMContentLoaded", () => {
                     action: 'cancel',
                     event_id: content.event_id, // Pass event ID just in case, though not strictly needed for cancel
                     summary: content.summary
+                };
+                submitConfirmation(submissionData, convoId, container, messageId);
+            };
+        }
+    }
+
+    function renderEventUpdateConfirmation(container, content, convoId, messageId) {
+        container.classList.remove("bubble");
+        
+        // Parse dates for original and updated events
+        function formatDateTime(dateObj) {
+            if (!dateObj) return { date: "Unknown", time: "" };
+            
+            try {
+                const dateVal = dateObj.dateTime || dateObj.date;
+                if (!dateVal) return { date: "Unknown", time: "" };
+                
+                const d = new Date(dateVal);
+                const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+                const timeStr = dateObj.dateTime ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : "";
+                
+                return { date: dateStr, time: timeStr };
+            } catch (e) {
+                console.error("Error parsing date", e);
+                return { date: "Unknown", time: "" };
+            }
+        }
+        
+        const original = content.original || {};
+        const updated = content.updated || {};
+        
+        const originalFormatted = formatDateTime(original.start);
+        const updatedFormatted = formatDateTime(updated.start);
+        
+        // Check what changed
+        const titleChanged = original.summary !== updated.summary;
+        const dateTimeChanged = JSON.stringify(original.start) !== JSON.stringify(updated.start);
+        
+        const hasConflict = content.has_conflict || false;
+        const conflicts = content.conflicts || [];
+        
+        const html = `
+            \u003cdiv class="event-preview-card update-confirmation" style="background: #1e1e1e; border: 1px solid #4a7c59; border-radius: 12px; padding: 16px; margin-top: 8px; color: #fff; font-family: sans-serif;"\u003e
+                \u003cdiv style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;"\u003e
+                    \u003cspan style="background: #2d4a3e; color: #81c995; padding: 2px 8px; border-radius: 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 1px;"\u003eUpdate Event\u003c/span\u003e
+                \u003c/div\u003e
+                
+                ${hasConflict ? `
+                    \u003cdiv style="background: #5c2b2b; border: 1px solid #8b3a3a; border-radius: 8px; padding: 10px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;"\u003e
+                        \u003cspan style="font-size: 18px;"\u003e⚠️\u003c/span\u003e
+                        \u003cdiv style="font-size: 13px; color: #ff9999;"\u003e
+                            \u003cdiv style="font-weight: 600; margin-bottom: 4px;"\u003eScheduling Conflict\u003c/div\u003e
+                            \u003cdiv style="color: #ffb3b3;"\u003eConflicts with: ${conflicts.map(function(c) { return escapeHtml(c.summary); }).join(', ')}\u003c/div\u003e
+                        \u003c/div\u003e
+                    \u003c/div\u003e
+                ` : ''}
+                
+                \u003cdiv style="display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; margin-bottom: 16px;"\u003e
+                    \u003c!-- Original --\u003e
+                    \u003cdiv style="background: #2a2a2a; border-radius: 8px; padding: 12px;"\u003e
+                        \u003cdiv style="font-size: 11px; color: #888; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;"\u003eOriginal\u003c/div\u003e
+                        \u003ch4 style="margin: 0 0 8px 0; font-size: 15px; font-weight: 600; ${titleChanged ? 'text-decoration: line-through; opacity: 0.6;' : ''}"\u003e${escapeHtml(original.summary || 'Untitled')}\u003c/h4\u003e
+                        \u003cdiv style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; color: #ccc; font-size: 13px; ${dateTimeChanged ? 'text-decoration: line-through; opacity: 0.6;' : ''}"\u003e
+                            \u003cspan\u003e📅\u003c/span\u003e
+                            \u003cspan\u003e${originalFormatted.date}\u003c/span\u003e
+                        \u003c/div\u003e
+                        ${originalFormatted.time ? `
+                            \u003cdiv style="display: flex; align-items: center; gap: 6px; color: #ccc; font-size: 13px; ${dateTimeChanged ? 'text-decoration: line-through; opacity: 0.6;' : ''}"\u003e
+                                \u003cspan\u003e⏰\u003c/span\u003e
+                                \u003cspan\u003e${originalFormatted.time}\u003c/span\u003e
+                            \u003c/div\u003e
+                        ` : ''}
+                    \u003c/div\u003e
+                    
+                    \u003c!-- Arrow --\u003e
+                    \u003cdiv style="display: flex; align-items: center; justify-content: center;"\u003e
+                        \u003csvg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#81c995" stroke-width="2"\u003e
+                            \u003cpath d="M5 12h14M12 5l7 7-7 7"/\u003e
+                        \u003c/svg\u003e
+                    \u003c/div\u003e
+                    
+                    \u003c!-- Updated --\u003e
+                    \u003cdiv style="background: #2d4a3e; border: 1px solid #4a7c59; border-radius: 8px; padding: 12px;"\u003e
+                        \u003cdiv style="font-size: 11px; color: #81c995; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;"\u003eUpdated\u003c/div\u003e
+                        \u003ch4 style="margin: 0 0 8px 0; font-size: 15px; font-weight: 600; color: #81c995;"\u003e${escapeHtml(updated.summary || 'Untitled')}\u003c/h4\u003e
+                        \u003cdiv style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; color: #b3e6c1; font-size: 13px;"\u003e
+                            \u003cspan\u003e📅\u003c/span\u003e
+                            \u003cspan\u003e${updatedFormatted.date}\u003c/span\u003e
+                        \u003c/div\u003e
+                        ${updatedFormatted.time ? `
+                            \u003cdiv style="display: flex; align-items: center; gap: 6px; color: #b3e6c1; font-size: 13px;"\u003e
+                                \u003cspan\u003e⏰\u003c/span\u003e
+                                \u003cspan\u003e${updatedFormatted.time}\u003c/span\u003e
+                            \u003c/div\u003e
+                        ` : ''}
+                    \u003c/div\u003e
+                \u003c/div\u003e
+                
+                \u003cdiv style="display: flex; gap: 10px;"\u003e
+                    \u003cbutton class="btn-update-confirm" style="flex: 1; background: #4a7c59; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500;"\u003eUpdate\u003c/button\u003e
+                    \u003cbutton class="btn-cancel" style="flex: 1; background: #333; color: white; border: 1px solid #555; padding: 8px 16px; border-radius: 6px; cursor: pointer;"\u003eCancel\u003c/button\u003e
+                \u003c/div\u003e
+            \u003c/div\u003e
+        `;
+        
+        container.innerHTML = html;
+        
+        const updateBtn = container.querySelector('.btn-update-confirm');
+        const cancelBtn = container.querySelector('.btn-cancel');
+        
+        if (updateBtn) {
+            updateBtn.onclick = function() {
+                updateBtn.textContent = "Updating...";
+                updateBtn.disabled = true;
+                if (cancelBtn) cancelBtn.disabled = true;
+                
+                const submissionData = {
+                    action: 'update',
+                    event_id: content.event_id,
+                    calendar_id: content.calendar_id || 'primary',
+                    original: content.original,
+                    updated: content.updated
+                };
+                
+                submitConfirmation(submissionData, convoId, container, messageId);
+            };
+        }
+        
+        if (cancelBtn) {
+            cancelBtn.onclick = function() {
+                cancelBtn.textContent = "Cancelling...";
+                cancelBtn.disabled = true;
+                if (updateBtn) updateBtn.disabled = true;
+
+                const submissionData = {
+                    action: 'cancel',
+                    event_id: content.event_id,
+                    summary: original.summary
                 };
                 submitConfirmation(submissionData, convoId, container, messageId);
             };
@@ -964,6 +1401,35 @@ document.addEventListener("DOMContentLoaded", () => {
                                 </svg>
                             </div>
                             <div style="font-weight: 600;">Event Deleted</div>
+                        </div>
+                    `;
+                    
+                    // Remove old text bubble and add new one if message exists
+                    if (messageContent) {
+                        // Remove any existing text bubbles within message-content
+                        const existingBubbles = messageContent.querySelectorAll('.bubble');
+                        existingBubbles.forEach(bubble => bubble.remove());
+                        
+                        // Add new text bubble if response exists
+                        if (data.response) {
+                            const textBubble = document.createElement('div');
+                            textBubble.className = 'bubble';
+                            textBubble.style.marginTop = '8px';
+                            textBubble.innerHTML = marked.parse(data.response);
+                            messageContent.appendChild(textBubble);
+                        }
+                    }
+                } else if (data.type === 'event_updated') {
+                    // Clear preview and render update success
+                    container.innerHTML = '';
+                    container.innerHTML = `
+                        <div style="background: #1e1e1e; border: 1px solid #333; border-radius: 12px; padding: 16px; color: #fff; display: flex; align-items: center; gap: 12px;">
+                            <div style="background: #333; border-radius: 50%; padding: 8px;">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4CAF50" stroke-width="2">
+                                    <path d="M20 6L9 17l-5-5" />
+                                </svg>
+                            </div>
+                            <div style="font-weight: 600;">Event Updated</div>
                         </div>
                     `;
                     
@@ -1279,6 +1745,28 @@ document.addEventListener("DOMContentLoaded", () => {
 
                                     } else if (responseType === 'event_deletion_confirmation') {
                                         renderEventDeletionConfirmation(intentElement.mainContentDiv, responseContent, data.convo_id, responseContent.message_id);
+                                        
+                                        // Add text bubble alongside the card if response text exists
+                                        if (agentResponse.response) {
+                                            // Wrap mainContentDiv in message-content if not already
+                                            let messageContent = intentElement.messageDiv.querySelector('.message-content');
+                                            if (!messageContent) {
+                                                messageContent = document.createElement('div');
+                                                messageContent.classList.add('message-content');
+                                                // Move mainContentDiv into message-content
+                                                intentElement.messageDiv.appendChild(messageContent);
+                                                messageContent.appendChild(intentElement.mainContentDiv);
+                                            }
+                                            
+                                            const textBubble = document.createElement('div');
+                                            textBubble.className = 'bubble';
+                                            textBubble.style.marginTop = '8px';
+                                            textBubble.innerHTML = marked.parse(agentResponse.response);
+                                            messageContent.appendChild(textBubble);
+                                        }
+
+                                    } else if (responseType === 'event_update_confirmation') {
+                                        renderEventUpdateConfirmation(intentElement.mainContentDiv, responseContent, data.convo_id, responseContent.message_id);
                                         
                                         // Add text bubble alongside the card if response text exists
                                         if (agentResponse.response) {

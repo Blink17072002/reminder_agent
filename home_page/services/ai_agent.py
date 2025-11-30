@@ -200,7 +200,7 @@ class AIAgent:
         parameter_prompt = (
             """You are a calendar parameter extractor. Extract structured data from the user's calendar request.
 
-            ACTIONS: create_event, list_events, delete_event, find_free_slots, list_calendars
+            ACTIONS: create_event, list_events, delete_event, update_event, find_free_slots, list_calendars
 
             REQUIRED FIELDS for create_event:
             - summary/title (what the event is about)
@@ -212,6 +212,12 @@ class AIAgent:
             - date (optional, to narrow down search)
             - start (optional, to disambiguate events)
             - end (optional, to disambiguate events)
+
+            REQUIRED FIELDS for update_event:
+            - summary/title (to identify the event to update)
+            - updates object (containing fields to modify)
+            - date (optional, to narrow down search)
+            - start (optional, to disambiguate events if multiple matches)
 
             OPTIONAL FIELDS:
             - attendees (list of email addresses)
@@ -226,6 +232,12 @@ class AIAgent:
                 "end": "time or datetime",
                 "duration": "minutes or 'X hours'",
                 "attendees": ["email@example.com"],
+                "updates": {
+                    "summary": "new title",
+                    "start": "new start time",
+                    "end": "new end time",
+                    "date": "new date"
+                },
                 "present": {},
                 "missing": []
             },
@@ -249,6 +261,18 @@ class AIAgent:
 
             Input: "What's on my calendar tomorrow?"
             Output: {{"action": "list_events", "params": {{"date": "tomorrow"}}, "details": "list events tomorrow"}}
+
+            Input: "Change my dentist appointment to 3pm"
+            Output: {{"action": "update_event", "params": {{"summary": "dentist appointment", "updates": {{"start": "15:00"}}, "present": {{"summary": "dentist appointment", "updates": {{"start": "15:00"}}}}, "missing": []}}, "details": "update dentist appointment to 3pm"}}
+
+            Input: "Move tomorrow's meeting to Friday"
+            Output: {{"action": "update_event", "params": {{"summary": "meeting", "date": "tomorrow", "updates": {{"date": "Friday"}}, "present": {{"summary": "meeting", "date": "tomorrow", "updates": {{"date": "Friday"}}}}, "missing": []}}, "details": "move tomorrow's meeting to Friday"}}
+
+            Input: "Reschedule the team sync to 4pm and rename it to standup"
+            Output: {{"action": "update_event", "params": {{"summary": "team sync", "updates": {{"start": "16:00", "summary": "standup"}}, "present": {{"summary": "team sync", "updates": {{"start": "16:00", "summary": "standup"}}}}, "missing": []}}, "details": "update team sync to 4pm and rename to standup"}}
+
+            Input: "Update the meeting at 10am to 2pm"
+            Output: {{"action": "update_event", "params": {{"summary": "meeting", "start": "10:00", "updates": {{"start": "14:00"}}, "present": {{"summary": "meeting", "start": "10:00", "updates": {{"start": "14:00"}}}}, "missing": []}}, "details": "update meeting at 10am to 2pm"}}
 
             If unclear or not calendar-related: {{"action": "unknown", "params": {{}}, "details": "request unclear"}}
 
@@ -392,7 +416,7 @@ class AIAgent:
                     Current: "Add lunch same day at noon"
                     → Extract ONLY: {{"action": "create_event", "params": {{"summary": "lunch", "date": "Tuesday", "start": "12:00"}}, ...}}
 
-                    ACTIONS: create_event, list_events, delete_event, find_free_slots, list_calendars
+                    ACTIONS: create_event, list_events, delete_event, update_event, find_free_slots, list_calendars
 
                     For create_event, REQUIRED fields:
                     - Event title/summary
@@ -402,6 +426,55 @@ class AIAgent:
                     For delete_event, REQUIRED fields:
                     - summary (event title to identify and delete)
                     - date (optional, defaults to today if not specified)
+                    
+                    For update_event, REQUIRED fields:
+                    - summary (event title to identify the event)
+                    - updates (object containing fields to modify: start, end, date, summary, etc.)
+                    - date (optional, to narrow down search for the event to update)
+                    - start (optional, to disambiguate if multiple events match)
+                    - update_series (boolean, MUST be true if user wants to update ALL instances/the entire series/recurring event)
+                    
+                    DETECTING SERIES UPDATES - Set update_series to TRUE if the user says:
+                    - "all instances"
+                    - "all of them"
+                    - "every instance"
+                    - "the whole series"
+                    - "the recurring event"
+                    - "every occurrence"
+                    - "all future instances"
+                    - Or asks to update a recurring event by name without specifying a single instance
+                    
+                    CRITICAL FOR UPDATE_EVENT:
+                    - ALWAYS return the update_event action as JSON, NEVER respond with explanatory text
+                    - DO NOT check if the event exists - just extract the parameters
+                    - The backend will handle searching for and verifying the event
+                    - The "updates" object should contain ONLY the fields the user wants to change
+                    - Return format: {{"action": "update_event", "params": {{"summary": "event name", "updates": {{"start": "15:00"}}}}, "message_for_user": "Looking for event to update..."}}
+                    
+                    UPDATE EXAMPLES:
+                    User: "Change my dentist appointment to 3pm"
+                    Response: {{"action": "update_event", "params": {{"summary": "dentist appointment", "updates": {{"start": "15:00"}}}}, "message_for_user": "Looking for dentist appointment to update..."}}
+                    
+                    User: "Move tomorrow's meeting to Friday"
+                    Response: {{"action": "update_event", "params": {{"summary": "meeting", "date": "tomorrow", "updates": {{"date": "Friday"}}}}, "message_for_user": "Looking for tomorrow's meeting to reschedule..."}}
+                    
+                    User: "Reschedule the team sync to 4pm and rename it to standup"
+                    Response: {{"action": "update_event", "params": {{"summary": "team sync", "updates": {{"start": "16:00", "summary": "standup"}}}}, "message_for_user": "Looking for team sync to update..."}}
+                    
+                    User: "Update the meeting at 10am to 2pm"
+                    Response: {{"action": "update_event", "params": {{"summary": "meeting", "start": "10:00", "updates": {{"start": "14:00"}}}}, "message_for_user": "Looking for the meeting at 10am to update..."}}
+                    
+                    User: "Change the lunch meeting to 1 hour earlier"
+                    Response: {{"action": "update_event", "params": {{"summary": "lunch meeting", "updates": {{"time_shift": "-1 hour"}}}}, "message_for_user": "Looking for lunch meeting to reschedule..."}}
+
+                    User: "Update all instances of the weekly meeting to 3pm"
+                    Response: {{"action": "update_event", "params": {{"summary": "weekly meeting", "update_series": true, "updates": {{"start": "15:00"}}}}, "message_for_user": "Looking for weekly meeting series to update..."}}
+                    
+                    User: "Update all instances of prayer meeting to 10pm to 11pm"
+                    Response: {{"action": "update_event", "params": {{"summary": "prayer meeting", "update_series": true, "updates": {{"start": "22:00", "end": "23:00"}}}}, "message_for_user": "Looking for prayer meeting series to update..."}}
+                    
+                    User: "All of them" (in context of updating a recurring event)
+                    Response: {{"action": "update_event", "params": {{"summary": "event name from context", "update_series": true, "updates": {{from context}}}}, "message_for_user": "Updating all instances..."}}
                     
                     CRITICAL FOR DELETE_EVENT:
                     - ALWAYS return the delete_event action as JSON, NEVER respond with explanatory text
@@ -418,6 +491,24 @@ class AIAgent:
                     
                     User: "Cancel the team sync on Friday"
                     Response: {{"action": "delete_event", "params": {{"summary": "team sync", "date": "YYYY-MM-DD"}}, "message_for_user": "Looking for team sync to cancel..."}}
+
+                    User: "The one at 10am" (Context: clarifying which event to delete)
+                    Response: {{"action": "delete_event", "params": {{"summary": "event name from context", "date": "YYYY-MM-DD", "start": "10:00"}}, "message_for_user": "Looking for the event at 10am to delete..."}}
+
+                    User: "The first one" (Context: clarifying which event to delete)
+                    Response: {{"action": "delete_event", "params": {{"summary": "event name from context", "date": "YYYY-MM-DD", "match_index": 1}}, "message_for_user": "Deleting the first event..."}}
+                    
+                    User: "Delete the second meeting"
+                    Response: {{"action": "delete_event", "params": {{"summary": "meeting", "date": "YYYY-MM-DD", "match_index": 2}}, "message_for_user": "Deleting the second meeting..."}}
+
+                    User: "Delete all events tomorrow"
+                    Response: {{"action": "delete_event", "params": {{"delete_all": true, "date": "tomorrow"}}, "message_for_user": "Deleting all events for tomorrow..."}}
+
+                    User: "Clear my calendar for next week"
+                    Response: {{"action": "delete_event", "params": {{"delete_all": true, "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"}}, "message_for_user": "Clearing calendar for next week..."}}
+
+                    User: "Delete everything on my calendar"
+                    Response: {{"action": "delete_event", "params": {{"delete_all": true, "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"}}, "message_for_user": "Clearing entire calendar..."}} (Set range to cover reasonable future, e.g. 1-2 years)
                     
                     OPTIONAL fields:
                     - Recurrence: If user mentions repetition (e.g. "every Monday", "daily", "weekly"), extract as RRULE string (RFC 5545).

@@ -2,3 +2,6 @@
 
 use this to update requirements.txt (ignores virtual environment and migrations): 
     pipreqs.exe . --force --encoding utf-8 --ignore "virtual,**/__pycache__,authentication/migrations,home_page/migrations"
+
+
+

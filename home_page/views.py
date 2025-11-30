@@ -441,11 +441,26 @@ def chat_process(request):
                         print(f"Failed to delete draft message {message_id}: {e}")
 
                 # Check if this is a deletion confirmation
-                if confirmation_data.get('action') == 'delete':
+                if confirmation_data.get('action') == 'delete' or confirmation_data.get('action') == 'delete_bulk':
                     event_id = confirmation_data.get('event_id')
                     calendar_id = confirmation_data.get('calendar_id', 'primary')
                     
-                    gcal.delete_event(calendar_id, event_id)
+                    # Check if this is bulk deletion (comma-separated IDs)
+                    if ',' in event_id:
+                        event_ids = event_id.split(',')
+                        deleted_count = 0
+                        for eid in event_ids:
+                            try:
+                                gcal.delete_event(calendar_id, eid.strip())
+                                deleted_count += 1
+                            except Exception as e:
+                                print(f"Failed to delete event {eid}: {e}")
+                        
+                        success_msg = f"{deleted_count} events have been removed from your calendar."
+                    else:
+                        # Single event deletion
+                        gcal.delete_event(calendar_id, event_id)
+                        success_msg = "The event has been removed from your calendar."
                     
                     # Delete the draft message if ID is provided
                     if message_id:
@@ -453,8 +468,6 @@ def chat_process(request):
                             Message.objects.filter(id=message_id, conversation=convo).delete()
                         except Exception as e:
                             print(f"Failed to delete draft message {message_id}: {e}")
-
-                    success_msg = "The event has been removed from your calendar."
                     
                     # Persist success message
                     Message.objects.create(
@@ -505,6 +518,154 @@ def chat_process(request):
                         'convo_title': convo.title,
                         'user_message_text': user_input,
                     })
+                
+                # Check if this is an update confirmation
+                elif confirmation_data.get('action') == 'update':
+                    event_id = confirmation_data.get('event_id')
+                    calendar_id = confirmation_data.get('calendar_id', 'primary')
+                    original = confirmation_data.get('original', {})
+                    updated = confirmation_data.get('updated', {})
+                    
+                    try:
+                        # Build the updated event body for Google Calendar API
+                        # Ensure start/end are in the correct format
+                        start_data = updated.get('start')
+                        if isinstance(start_data, str):
+                            start_data = {'dateTime': start_data}
+                        
+                        end_data = updated.get('end')
+                        if isinstance(end_data, str):
+                            end_data = {'dateTime': end_data}
+                        
+                        # Ensure timeZone is present
+                        if 'timeZone' not in start_data:
+                            start_data['timeZone'] = client_tz_name or 'UTC'
+                        if 'timeZone' not in end_data:
+                            end_data['timeZone'] = client_tz_name or 'UTC'
+                        
+                        event_body = {
+                            'summary': updated.get('summary'),
+                            'start': start_data,
+                            'end': end_data,
+                        }
+                        
+                        # CRITICAL: Preserve recurrence rules for recurring events
+                        # If we don't include recurrence when updating a recurring event,
+                        # Google Calendar API will convert it to a single event!
+                        try:
+                            # Fetch the current event to get its recurrence rules
+                            current_event = gcal.get_event(calendar_id, event_id)
+                            if current_event.get('recurrence'):
+                                # Preserve the recurrence rules
+                                event_body['recurrence'] = current_event['recurrence']
+                        except Exception as e:
+                            print(f"Warning: Could not fetch event recurrence: {e}")
+                        
+                        # Update the event in Google Calendar
+                        gcal.update_event(calendar_id, event_id, event_body)
+                        
+                        # Delete the draft message if ID is provided
+                        if message_id:
+                            try:
+                                Message.objects.filter(id=message_id, conversation=convo).delete()
+                            except Exception as e:
+                                print(f"Failed to delete draft message {message_id}: {e}")
+                        
+                        # Get user's timezone
+                        try:
+                            from zoneinfo import ZoneInfo
+                            user_tz = ZoneInfo(client_tz_name or getattr(settings, 'TIME_ZONE', 'UTC') or 'UTC')
+                        except Exception:
+                            from django.utils.timezone import get_current_timezone
+                            user_tz = get_current_timezone()
+                        
+                        # Helper to format for display
+                        def _fmt_time_iso(iso_str):
+                            try:
+                                dt_utc = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+                                dt_local = dt_utc.astimezone(user_tz)
+                                t = dt_local.strftime('%I:%M %p')
+                                return t.lstrip('0').replace('AM', 'am').replace('PM', 'pm')
+                            except: return iso_str
+                        
+                        def _fmt_date_iso(iso_str_or_dict):
+                            try:
+                                # Handle both string and dict formats
+                                if isinstance(iso_str_or_dict, dict):
+                                    iso_str = iso_str_or_dict.get('dateTime') or iso_str_or_dict.get('date')
+                                else:
+                                    iso_str = iso_str_or_dict
+                                
+                                if not iso_str:
+                                    return ''
+                                
+                                dt_utc = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+                                dt_local = dt_utc.astimezone(user_tz)
+                                return dt_local.strftime('%A, %B %d').replace(' 0', ' ')
+                            except: return str(iso_str_or_dict)
+                        
+                        # Generate success message highlighting what changed
+                        original_summary = original.get('summary', '')
+                        updated_summary = updated.get('summary', '')
+                        
+                        changes = []
+                        if original_summary != updated_summary:
+                            changes.append(f"title to '{updated_summary}'")
+                        
+                        original_start = original.get('start', {})
+                        updated_start = updated.get('start', {})
+                        if original_start != updated_start:
+                            if updated_start.get('dateTime'):
+                                new_time = _fmt_time_iso(updated_start['dateTime'])
+                                new_date = _fmt_date_iso(updated_start)
+                                changes.append(f"time to {new_time} on {new_date}")
+                            elif updated_start.get('date'):
+                                new_date = _fmt_date_iso(updated_start)
+                                changes.append(f"date to {new_date}")
+                        
+                        if changes:
+                            change_desc = " and ".join(changes)
+                            success_msg = f"✓ Updated '{original_summary}' — changed {change_desc}."
+                        else:
+                            success_msg = f"✓ Updated '{original_summary}'."
+                        
+                        # Persist success message
+                        Message.objects.create(
+                            conversation=convo,
+                            sender='agent',
+                            text=success_msg,
+                            message_type='event_updated',
+                            content={'event_id': event_id, 'original': original, 'updated': updated}
+                        )
+                        
+                        return JsonResponse({
+                            'type': 'event_updated',
+                            'response': success_msg,
+                            'content': {'event_id': event_id, 'original': original, 'updated': updated},
+                            'intent': 'calendar',
+                            'convo_id': str(convo.id),
+                            'convo_title': convo.title,
+                            'user_message_text': user_input,
+                        })
+                    
+                    except Exception as e:
+                        print(f"Error updating event: {e}")
+                        error_msg = f"Sorry, I failed to update the event: {e}"
+                        
+                        Message.objects.create(
+                            conversation=convo,
+                            sender='agent',
+                            text=error_msg,
+                            message_type='text'
+                        )
+                        
+                        return JsonResponse({
+                            'type': 'text',
+                            'response': error_msg,
+                            'content': {},
+                            'intent': 'calendar',
+                            'convo_id': str(convo.id)
+                        })
 
                 # Ensure start/end are in the correct format (dict with dateTime)
                 start_data = confirmation_data.get('start')
@@ -1318,31 +1479,126 @@ def chat_process(request):
                     date_str = norm.get('date') or norm.get('start_date')
                     time_str = norm.get('start') or norm.get('start_time')
                     
-                    # Default to today if no date specified
-                    target_date = None
-                    if date_str:
-                         target_date = _parse_simple_date(date_str)
+                    try:
+                        from zoneinfo import ZoneInfo
+                        tz = ZoneInfo(client_tz_name or getattr(settings, 'TIME_ZONE', 'UTC') or 'UTC')
+                    except Exception:
+                        tz = get_current_timezone()
                     
-                    if not target_date:
-                         target_date = datetime.now().date() # Fallback to today
+                    delete_all = norm.get('delete_all')
+                    start_date_str = norm.get('start_date')
+                    end_date_str = norm.get('end_date')
+                    
+                    # Determine time range
+                    range_start = None
+                    range_end = None
+                    
+                    if start_date_str and end_date_str:
+                        s_date = _parse_simple_date(start_date_str)
+                        e_date = _parse_simple_date(end_date_str)
+                        if s_date and e_date:
+                            range_start = datetime.combine(s_date, datetime.min.time()).isoformat() + 'Z'
+                            range_end = datetime.combine(e_date, datetime.max.time()).isoformat() + 'Z'
+                            target_date = f"{s_date} to {e_date}" # For display
+                    
+                    if not range_start:
+                        # Fallback to single day logic
+                        target_date_obj = None
+                        if date_str:
+                             target_date_obj = _parse_simple_date(date_str)
+                        
+                        if not target_date_obj:
+                             target_date_obj = datetime.now().date() # Fallback to today
+                        
+                        target_date = target_date_obj # For display
+                        range_start = datetime.combine(target_date_obj, datetime.min.time()).isoformat() + 'Z'
+                        range_end = datetime.combine(target_date_obj, datetime.max.time()).isoformat() + 'Z'
 
-                    # List events for the target day
-                    day_start = datetime.combine(target_date, datetime.min.time()).isoformat() + 'Z'
-                    day_end = datetime.combine(target_date, datetime.max.time()).isoformat() + 'Z'
+                    events = gcal.list_events(time_min=range_start, time_max=range_end)
                     
-                    events = gcal.list_events(time_min=day_start, time_max=day_end)
-                    
-                    # Filter by summary (fuzzy match)
+                    # Filter by summary (fuzzy match) unless delete_all is True
                     matches = []
-                    for event in events:
-                        event_summary = event.get('summary', '')
-                        if summary_query and summary_query.lower() in event_summary.lower():
-                            matches.append(event)
-                        elif not summary_query:
-                            # If no summary provided, maybe match by time?
-                            # For now, if no summary, we can't safely delete unless there's only 1 event total?
-                            # Let's require summary or time.
-                            pass
+                    if delete_all:
+                        matches = events
+                    else:
+                        for event in events:
+                            event_summary = event.get('summary', '')
+                            if summary_query and summary_query.lower() in event_summary.lower():
+                                matches.append(event)
+                            elif not summary_query:
+                                pass
+                    
+                    # If delete_all is True and we have matches, we need to confirm deletion of MULTIPLE events
+                    # The existing logic handles len(matches) > 1 by asking "Which one?", but for delete_all we want to confirm "Delete all X?"
+                    if delete_all and matches:
+                        # Special handling for bulk deletion confirmation
+                        response_type = 'event_deletion_confirmation' # Re-using this type might need adjustment or a new type
+                        # Actually, let's use a text confirmation for now or adapt the card
+                        # If we want to use the card, we need to pass a single event ID. 
+                        # But we have multiple.
+                        # Let's create a special "bulk_delete" action or just iterate?
+                        # Iterating is risky without confirmation.
+                        
+                        # Let's use a text response with a "confirm" button if possible, or just text.
+                        # For now, let's treat it as a special case where we ask for confirmation in text.
+                        # OR, we can pick the first event to show in the card and say "and X others"?
+                        
+                        # Let's try to support bulk delete in the confirmation card?
+                        # The card expects 'event_id'.
+                        
+                        # Simplest approach: If delete_all, we just proceed to delete? NO, dangerous.
+                        # We need confirmation.
+                        
+                        # Let's construct a summary message.
+                        agent_message = f"I found {len(matches)} events on {target_date}. Are you sure you want to delete ALL of them?"
+                        
+                        # We can't use the standard 'event_deletion_confirmation' card easily because it's tied to a single event ID for the 'delete' button action.
+                        # We might need to modify the frontend/backend to support a list of IDs or a 'bulk_delete' flag.
+                        
+                        # For this iteration, let's just list them and ask for confirmation via text?
+                        # But the user wants to click "Delete".
+                        
+                        # Hack: Pass a special event_id or use a new message type?
+                        # Let's use 'event_deletion_confirmation' but with a special ID 'BULK' and store the list in the session or params?
+                        # Or pass all IDs in the 'event_id' field separated by commas?
+                        
+                        all_ids = ",".join([e['id'] for e in matches])
+                        response_content = {
+                            'event_id': all_ids, # Pass all IDs
+                            'summary': f"{len(matches)} events",
+                            'start': matches[0]['start'], # Just show first one's time or range
+                            'end': matches[-1]['end'],
+                            'action': 'delete_bulk' # New action type for frontend/backend to handle?
+                        }
+                        # Wait, the frontend just calls 'delete_event' with the ID.
+                        # If we pass comma-separated IDs, we need to update the 'delete_event' handler to split them.
+                        
+                        draft_msg = Message.objects.create(
+                            conversation=convo,
+                            sender='agent',
+                            text=agent_message,
+                            message_type='event_deletion_confirmation',
+                            content=response_content,
+                        )
+                        response_content['message_id'] = draft_msg.id
+                        
+                        # Update the message content to include message_id
+                        draft_msg.content = response_content
+                        draft_msg.save()
+                        
+                        agent_response_text = agent_message
+                        
+                        # We need to ensure the 'confirm_action' handles this.
+                        # Let's return here to avoid falling into the other logic.
+                        return JsonResponse({
+                            'type': response_type,
+                            'response': agent_message,
+                            'content': response_content,
+                            'message_id': draft_msg.id
+                        })
+
+
+                    # If not delete_all mode, continue with existing logic for single/ambiguous matches
                             
                     # If time is provided, filter by time as well
                     if time_str and matches:
@@ -1402,7 +1658,16 @@ def chat_process(request):
                         except Exception as e:
                             print(f"Error filtering by time: {e}")
                             pass
+                    match_index = norm.get('match_index')
                     
+                    # Sort matches by start time to ensure consistent ordering for "first", "second", etc.
+                    matches.sort(key=lambda x: x.get('start', {}).get('dateTime') or x.get('start', {}).get('date') or '')
+
+                    if match_index and isinstance(match_index, int) and matches:
+                        idx = match_index - 1 # 1-based index from AI
+                        if 0 <= idx < len(matches):
+                            matches = [matches[idx]]
+
                     if len(matches) == 1:
                         event = matches[0]
                         # Generate confirmation
@@ -1430,13 +1695,600 @@ def chat_process(request):
                     elif len(matches) > 1:
                         response_type = 'text'
                         agent_response_text = f"I found multiple events matching '{summary_query}'. Which one would you like to delete?"
-                        # Could list them here
+                        # Persist error
+                        Message.objects.create(conversation=convo, sender='agent', text=agent_response_text, message_type='text')
                         
                     else:
                         response_type = 'text'
                         agent_response_text = f"I couldn't find any event matching '{summary_query}' on {target_date}."
                         # Persist error
                         Message.objects.create(conversation=convo, sender='agent', text=agent_response_text, message_type='text')
+
+
+                elif action == 'update_event':
+                    norm = dict(params or {})
+                    summary_query = norm.get('summary')
+                    date_str = norm.get('date') or norm.get('start_date')
+                    time_str = norm.get('start') or norm.get('start_time')
+                    updates = norm.get('updates', {})
+                    
+                    if not updates:
+                        response_type = 'text'
+                        agent_response_text = "I couldn't determine what you'd like to update. Please specify what changes you want to make."
+                        Message.objects.create(conversation=convo, sender='agent', text=agent_response_text, message_type='text')
+                    else:
+                        try:
+                            from zoneinfo import ZoneInfo
+                            tz = ZoneInfo(client_tz_name or getattr(settings, 'TIME_ZONE', 'UTC') or 'UTC')
+                        except Exception:
+                            tz = get_current_timezone()
+                        
+                        # Determine search time range
+                        range_start = None
+                        range_end = None
+                        target_date = None
+                        
+                        if date_str:
+                            target_date_obj = _parse_simple_date(date_str)
+                            if target_date_obj:
+                                target_date = target_date_obj
+                                range_start = datetime.combine(target_date_obj, datetime.min.time()).isoformat() + 'Z'
+                                range_end = datetime.combine(target_date_obj, datetime.max.time()).isoformat() + 'Z'
+                        
+                        if not range_start:
+                            # Default to searching a wider range (today and future events)
+                            today = datetime.now(tz).date()
+                            target_date = today
+                            range_start = datetime.combine(today, datetime.min.time()).isoformat() + 'Z'
+                            # Search up to 30 days ahead
+                            range_end = datetime.combine(today + timedelta(days=30), datetime.max.time()).isoformat() + 'Z'
+                        
+                        events = gcal.list_events(time_min=range_start, time_max=range_end)
+                        
+                        # Filter by summary (fuzzy match)
+                        matches = []
+                        if summary_query:
+                            for event in events:
+                                event_summary = event.get('summary', '')
+                                if summary_query.lower() in event_summary.lower():
+                                    matches.append(event)
+                        
+                        # If time is provided, filter by time as well
+                        if time_str and matches:
+                            try:
+                                # Parse time_str (e.g. "10am", "14:00")
+                                filter_hour = None
+                                filter_minute = None
+                                
+                                ts = time_str.lower().replace(' ', '')
+                                import re
+                                time_match = re.match(r'(\d{1,2})(?::(\d{2}))?([ap]m)?', ts)
+                                if time_match:
+                                    h = int(time_match.group(1))
+                                    m = int(time_match.group(2) or 0)
+                                    ampm = time_match.group(3)
+                                    
+                                    if ampm:
+                                        if ampm == 'pm' and h < 12:
+                                            h += 12
+                                        elif ampm == 'am' and h == 12:
+                                            h = 0
+                                    
+                                    filter_hour = h
+                                    filter_minute = m
+                                    
+                                    # Filter matches
+                                    time_filtered = []
+                                    for evt in matches:
+                                        start_dt_str = evt.get('start', {}).get('dateTime')
+                                        if start_dt_str:
+                                            evt_dt = datetime.fromisoformat(start_dt_str.replace('Z', '+00:00'))
+                                            evt_dt_local = evt_dt.astimezone(tz)
+                                            
+                                            # fuzzy match: within 15 mins
+                                            if evt_dt_local.hour == filter_hour and abs(evt_dt_local.minute - filter_minute) < 15:
+                                                time_filtered.append(evt)
+                                    
+                                    if time_filtered:
+                                        matches = time_filtered
+                            except Exception as e:
+                                print(f"Error filtering by time: {e}")
+                                pass
+                        
+                        match_index = norm.get('match_index')
+                        
+                        # Sort matches by start time
+                        matches.sort(key=lambda x: x.get('start', {}).get('dateTime') or x.get('start', {}).get('date') or '')
+                        
+                        if match_index and isinstance(match_index, int) and matches:
+                            idx = match_index - 1
+                            if 0 <= idx < len(matches):
+                                matches = [matches[idx]]
+                        
+                        if len(matches) == 1:
+                            event = matches[0]
+                            event_id = event['id']
+                            
+                            # Check for series update intent
+                            update_series = norm.get('update_series', False)
+                            
+                            # If user wants to update series and it's a recurring instance
+                            if update_series and 'recurringEventId' in event:
+                                try:
+                                    # Fetch master event
+                                    master_event = gcal.get_event('primary', event['recurringEventId'])
+                                    if master_event:
+                                        event = master_event
+                                        event_id = master_event['id']
+                                except Exception as e:
+                                    print(f"Error fetching master event: {e}")
+
+                            
+                            # Parse the updates and build the updated event preview
+                            # We'll show a confirmation card with before/after details
+                            
+                            # Get current event details
+                            current_start = event.get('start', {})
+                            current_end = event.get('end', {})
+                            current_summary = event.get('summary', '')
+                            
+                            # Parse updates
+                            updated_start = current_start.copy()
+                            updated_end = current_end.copy()
+                            updated_summary = current_summary
+                            
+                            # Handle date updates
+                            if 'date' in updates:
+                                new_date_obj = _parse_simple_date(updates['date'])
+                                if new_date_obj:
+                                    new_date_str = new_date_obj.isoformat()
+                                    
+                                    # If current event has dateTime, preserve time but change date
+                                    if current_start.get('dateTime'):
+                                        current_dt = datetime.fromisoformat(current_start['dateTime'].replace('Z', '+00:00'))
+                                        new_dt = datetime.combine(new_date_obj, current_dt.time()).replace(tzinfo=current_dt.tzinfo)
+                                        updated_start = {'dateTime': new_dt.isoformat()}
+                                        
+                                        if current_end.get('dateTime'):
+                                            current_end_dt = datetime.fromisoformat(current_end['dateTime'].replace('Z', '+00:00'))
+                                            duration = current_end_dt - current_dt
+                                            new_end_dt = new_dt + duration
+                                            updated_end = {'dateTime': new_end_dt.isoformat()}
+                                    else:
+                                        # All-day event
+                                        updated_start = {'date': new_date_str}
+                                        updated_end = {'date': (new_date_obj + timedelta(days=1)).isoformat()}
+                            
+                            # Handle time updates (start/end)
+                            if 'start' in updates:
+                                new_time_str = updates['start']
+                                # Parse time (e.g., "15:00", "3pm")
+                                try:
+                                    # Try HH:MM format first
+                                    if ':' in new_time_str:
+                                        time_parts = new_time_str.split(':')
+                                        new_hour = int(time_parts[0])
+                                        new_minute = int(time_parts[1]) if len(time_parts) > 1 else 0
+                                    else:
+                                        # Try 12h format
+                                        ts = new_time_str.lower().replace(' ', '')
+                                        import re
+                                        time_match = re.match(r'(\d{1,2})(?::(\d{2}))?([ap]m)?', ts)
+                                        if time_match:
+                                            new_hour = int(time_match.group(1))
+                                            new_minute = int(time_match.group(2) or 0)
+                                            ampm = time_match.group(3)
+                                            
+                                            if ampm:
+                                                if ampm == 'pm' and new_hour < 12:
+                                                    new_hour += 12
+                                                elif ampm == 'am' and new_hour == 12:
+                                                    new_hour = 0
+                                        else:
+                                            raise ValueError("Invalid time format")
+                                    
+                                    # Get the date from current event or updated date
+                                    if updated_start.get('dateTime'):
+                                        base_dt = datetime.fromisoformat(updated_start['dateTime'].replace('Z', '+00:00'))
+                                        new_start_dt = base_dt.replace(hour=new_hour, minute=new_minute)
+                                        updated_start = {'dateTime': new_start_dt.isoformat()}
+                                        
+                                        # Preserve duration if end exists
+                                        if current_end.get('dateTime'):
+                                            current_start_dt = datetime.fromisoformat(current_start['dateTime'].replace('Z', '+00:00'))
+                                            current_end_dt = datetime.fromisoformat(current_end['dateTime'].replace('Z', '+00:00'))
+                                            duration = current_end_dt - current_start_dt
+                                            new_end_dt = new_start_dt + duration
+                                            updated_end = {'dateTime': new_end_dt.isoformat()}
+                                    else:
+                                        # Convert all-day to timed event
+                                        # Use current date or updated date
+                                        if current_start.get('date'):
+                                            event_date = datetime.fromisoformat(current_start['date']).date()
+                                        else:
+                                            event_date = datetime.now(tz).date()
+                                        
+                                        new_start_dt = datetime.combine(event_date, datetime.min.time()).replace(
+                                            hour=new_hour, minute=new_minute, tzinfo=tz
+                                        )
+                                        updated_start = {'dateTime': new_start_dt.isoformat()}
+                                        # Default 1 hour duration
+                                        updated_end = {'dateTime': (new_start_dt + timedelta(hours=1)).isoformat()}
+                                except Exception as e:
+                                    print(f"Error parsing new start time: {e}")
+                            
+                            if 'end' in updates:
+                                new_time_str = updates['end']
+                                try:
+                                    # Parse end time
+                                    if ':' in new_time_str:
+                                        time_parts = new_time_str.split(':')
+                                        new_hour = int(time_parts[0])
+                                        new_minute = int(time_parts[1]) if len(time_parts) > 1 else 0
+                                    else:
+                                        ts = new_time_str.lower().replace(' ', '')
+                                        import re
+                                        time_match = re.match(r'(\d{1,2})(?::(\d{2}))?([ap]m)?', ts)
+                                        if time_match:
+                                            new_hour = int(time_match.group(1))
+                                            new_minute = int(time_match.group(2) or 0)
+                                            ampm = time_match.group(3)
+                                            
+                                            if ampm:
+                                                if ampm == 'pm' and new_hour < 12:
+                                                    new_hour += 12
+                                                elif ampm == 'am' and new_hour == 12:
+                                                    new_hour = 0
+                                        else:
+                                            raise ValueError("Invalid time format")
+                                    
+                                    if updated_start.get('dateTime'):
+                                        base_dt = datetime.fromisoformat(updated_start['dateTime'].replace('Z', '+00:00'))
+                                        new_end_dt = base_dt.replace(hour=new_hour, minute=new_minute)
+                                        updated_end = {'dateTime': new_end_dt.isoformat()}
+                                except Exception as e:
+                                    print(f"Error parsing new end time: {e}")
+                            
+                            # Handle title/summary update
+                            if 'summary' in updates:
+                                updated_summary = updates['summary']
+                            
+                            # Check for conflicts with new time slot
+                            has_conflict = False
+                            conflicts = []
+                            
+                            if updated_start.get('dateTime'):
+                                # Check if new time conflicts with other events
+                                try:
+                                    new_start_dt = datetime.fromisoformat(updated_start['dateTime'].replace('Z', '+00:00'))
+                                    new_end_dt = datetime.fromisoformat(updated_end['dateTime'].replace('Z', '+00:00')) if updated_end.get('dateTime') else new_start_dt + timedelta(hours=1)
+                                    
+                                    # Search for events in the new time window
+                                    conflict_search_start = new_start_dt.isoformat()
+                                    conflict_search_end = new_end_dt.isoformat()
+                                    
+                                    all_events = gcal.list_events(
+                                        time_min=conflict_search_start,
+                                        time_max=conflict_search_end
+                                    )
+                                    
+                                    for evt in all_events:
+                                        # Skip the event being updated
+                                        if evt['id'] == event_id:
+                                            continue
+                                        
+                                        evt_start = evt.get('start', {}).get('dateTime')
+                                        evt_end = evt.get('end', {}).get('dateTime')
+                                        
+                                        if evt_start and evt_end:
+                                            evt_start_dt = datetime.fromisoformat(evt_start.replace('Z', '+00:00'))
+                                            evt_end_dt = datetime.fromisoformat(evt_end.replace('Z', '+00:00'))
+                                            
+                                            # Check for overlap
+                                            if (new_start_dt < evt_end_dt and new_end_dt > evt_start_dt):
+                                                has_conflict = True
+                                                conflicts.append({
+                                                    'summary': evt.get('summary', 'Untitled'),
+                                                    'start': evt['start'],
+                                                    'end': evt['end']
+                                                })
+                                except Exception as e:
+                                    print(f"Error checking conflicts: {e}")
+                            
+                            # Generate confirmation message
+                            response_type = 'event_update_confirmation'
+                            response_content = {
+                                'event_id': event_id,
+                                'original': {
+                                    'summary': current_summary,
+                                    'start': current_start,
+                                    'end': current_end
+                                },
+                                'updated': {
+                                    'summary': updated_summary,
+                                    'start': updated_start,
+                                    'end': updated_end
+                                },
+                                'has_conflict': has_conflict,
+                                'conflicts': conflicts if has_conflict else [],
+                                'action': 'update'
+                            }
+                            
+                            # Generate AI message about the update
+                            changes = []
+                            if updated_summary != current_summary:
+                                changes.append(f"title to '{updated_summary}'")
+                            if updated_start != current_start:
+                                # Format time nicely
+                                try:
+                                    if updated_start.get('dateTime'):
+                                        new_dt = datetime.fromisoformat(updated_start['dateTime'].replace('Z', '+00:00')).astimezone(tz)
+                                        time_str = new_dt.strftime('%I:%M %p').lstrip('0')
+                                        date_str = new_dt.strftime('%A, %B %d').replace(' 0', ' ')
+                                        changes.append(f"time to {time_str} on {date_str}")
+                                    elif updated_start.get('date'):
+                                        date_obj = datetime.fromisoformat(updated_start['date']).date()
+                                        changes.append(f"date to {date_obj.strftime('%A, %B %d').replace(' 0', ' ')}")
+                                except:
+                                    changes.append("time")
+                            
+                            if changes:
+                                change_desc = " and ".join(changes)
+                                if has_conflict:
+                                    agent_message = f"⚠️ I found '{current_summary}' and can update the {change_desc}, but you have a conflict at that time. Do you want to proceed?"
+                                else:
+                                    agent_message = f"I found '{current_summary}'. Update the {change_desc}?"
+                            else:
+                                agent_message = f"I found '{current_summary}', but I'm not sure what changes you'd like to make."
+                            
+                            # Persist draft
+                            draft_msg = Message.objects.create(
+                                conversation=convo,
+                                sender='agent',
+                                text=agent_message,
+                                message_type='event_update_confirmation',
+                                content=response_content,
+                            )
+                            response_content['message_id'] = draft_msg.id
+                            agent_response_text = agent_message
+                        
+                        elif len(matches) > 1:
+                            # Check if user wants to update series
+                            update_series = norm.get('update_series', False)
+                            
+                            # If user wants to update series and the events are recurring instances
+                            if update_series and matches[0].get('recurringEventId'):
+                                # Use the first match to get the master event
+                                try:
+                                    master_event = gcal.get_event('primary', matches[0]['recurringEventId'])
+                                    if master_event:
+                                        # Treat as single match with the master event
+                                        matches = [master_event]
+                                        # Continue to the single match handling below
+                                        # We'll jump back to re-process with len(matches) == 1
+                                        event = matches[0]
+                                        event_id = event['id']
+                                        
+                                        # Get current event details
+                                        current_start = event.get('start', {})
+                                        current_end = event.get('end', {})
+                                        current_summary = event.get('summary', '')
+                                        
+                                        # Parse updates (reusing logic from single match case)
+                                        updated_start = current_start.copy()
+                                        updated_end = current_end.copy()
+                                        updated_summary = current_summary
+                                        
+                                        # Handle date updates
+                                        if 'date' in updates:
+                                            new_date_obj = _parse_simple_date(updates['date'])
+                                            if new_date_obj:
+                                                new_date_str = new_date_obj.isoformat()
+                                                
+                                                if current_start.get('dateTime'):
+                                                    current_dt = datetime.fromisoformat(current_start['dateTime'].replace('Z', '+00:00'))
+                                                    new_dt = datetime.combine(new_date_obj, current_dt.time()).replace(tzinfo=current_dt.tzinfo)
+                                                    updated_start = {'dateTime': new_dt.isoformat()}
+                                                    
+                                                    if current_end.get('dateTime'):
+                                                        current_end_dt = datetime.fromisoformat(current_end['dateTime'].replace('Z', '+00:00'))
+                                                        duration = current_end_dt - current_dt
+                                                        new_end_dt = new_dt + duration
+                                                        updated_end = {'dateTime': new_end_dt.isoformat()}
+                                                else:
+                                                    updated_start = {'date': new_date_str}
+                                                    updated_end = {'date': (new_date_obj + timedelta(days=1)).isoformat()}
+                                        
+                                        # Handle time updates (start/end)
+                                        if 'start' in updates:
+                                            new_time_str = updates['start']
+                                            try:
+                                                if ':' in new_time_str:
+                                                    time_parts = new_time_str.split(':')
+                                                    new_hour = int(time_parts[0])
+                                                    new_minute = int(time_parts[1]) if len(time_parts) > 1 else 0
+                                                else:
+                                                    ts = new_time_str.lower().replace(' ', '')
+                                                    import re
+                                                    time_match = re.match(r'(\d{1,2})(?::(\d{2}))?([ap]m)?', ts)
+                                                    if time_match:
+                                                        new_hour = int(time_match.group(1))
+                                                        new_minute = int(time_match.group(2) or 0)
+                                                        ampm = time_match.group(3)
+                                                        
+                                                        if ampm:
+                                                            if ampm == 'pm' and new_hour < 12:
+                                                                new_hour += 12
+                                                            elif ampm == 'am' and new_hour == 12:
+                                                                new_hour = 0
+                                                    else:
+                                                        raise ValueError("Invalid time format")
+                                                
+                                                if updated_start.get('dateTime'):
+                                                    base_dt = datetime.fromisoformat(updated_start['dateTime'].replace('Z', '+00:00'))
+                                                    new_start_dt = base_dt.replace(hour=new_hour, minute=new_minute)
+                                                    updated_start = {'dateTime': new_start_dt.isoformat()}
+                                                    
+                                                    if current_end.get('dateTime'):
+                                                        current_start_dt = datetime.fromisoformat(current_start['dateTime'].replace('Z', '+00:00'))
+                                                        current_end_dt = datetime.fromisoformat(current_end['dateTime'].replace('Z', '+00:00'))
+                                                        duration = current_end_dt - current_start_dt
+                                                        new_end_dt = new_start_dt + duration
+                                                        updated_end = {'dateTime': new_end_dt.isoformat()}
+                                                else:
+                                                    if current_start.get('date'):
+                                                        event_date = datetime.fromisoformat(current_start['date']).date()
+                                                    else:
+                                                        event_date = datetime.now(tz).date()
+                                                    
+                                                    new_start_dt = datetime.combine(event_date, datetime.min.time()).replace(
+                                                        hour=new_hour, minute=new_minute, tzinfo=tz
+                                                    )
+                                                    updated_start = {'dateTime': new_start_dt.isoformat()}
+                                                    updated_end = {'dateTime': (new_start_dt + timedelta(hours=1)).isoformat()}
+                                            except Exception as e:
+                                                print(f"Error parsing new start time: {e}")
+                                        
+                                        if 'end' in updates:
+                                            new_time_str = updates['end']
+                                            try:
+                                                if ':' in new_time_str:
+                                                    time_parts = new_time_str.split(':')
+                                                    new_hour = int(time_parts[0])
+                                                    new_minute = int(time_parts[1]) if len(time_parts) > 1 else 0
+                                                else:
+                                                    ts = new_time_str.lower().replace(' ', '')
+                                                    import re
+                                                    time_match = re.match(r'(\d{1,2})(?::(\d{2}))?([ap]m)?', ts)
+                                                    if time_match:
+                                                        new_hour = int(time_match.group(1))
+                                                        new_minute = int(time_match.group(2) or 0)
+                                                        ampm = time_match.group(3)
+                                                        
+                                                        if ampm:
+                                                            if ampm == 'pm' and new_hour < 12:
+                                                                new_hour += 12
+                                                            elif ampm == 'am' and new_hour == 12:
+                                                                new_hour = 0
+                                                    else:
+                                                        raise ValueError("Invalid time format")
+                                                
+                                                if updated_start.get('dateTime'):
+                                                    base_dt = datetime.fromisoformat(updated_start['dateTime'].replace('Z', '+00:00'))
+                                                    new_end_dt = base_dt.replace(hour=new_hour, minute=new_minute)
+                                                    updated_end = {'dateTime': new_end_dt.isoformat()}
+                                            except Exception as e:
+                                                print(f"Error parsing new end time: {e}")
+                                        
+                                        if 'summary' in updates:
+                                            updated_summary = updates['summary']
+                                        
+                                        # Generate confirmation
+                                        response_type = 'event_update_confirmation'
+                                        response_content = {
+                                            'event_id': event_id,
+                                            'original': {
+                                                'summary': current_summary,
+                                                'start': current_start,
+                                                'end': current_end
+                                            },
+                                            'updated': {
+                                                'summary': updated_summary,
+                                                'start': updated_start,
+                                                'end': updated_end
+                                            },
+                                            'has_conflict': False,
+                                            'conflicts': [],
+                                            'action': 'update',
+                                            'is_series_update': True
+                                        }
+                                        
+                                        changes = []
+                                        if updated_summary != current_summary:
+                                            changes.append(f"title to '{updated_summary}'")
+                                        if updated_start != current_start:
+                                            try:
+                                                if updated_start.get('dateTime'):
+                                                    new_dt = datetime.fromisoformat(updated_start['dateTime'].replace('Z', '+00:00')).astimezone(tz)
+                                                    time_str = new_dt.strftime('%I:%M %p').lstrip('0')
+                                                    date_str = new_dt.strftime('%A, %B %d').replace(' 0', ' ')
+                                                    changes.append(f"time to {time_str} on {date_str}")
+                                                elif updated_start.get('date'):
+                                                    date_obj = datetime.fromisoformat(updated_start['date']).date()
+                                                    changes.append(f"date to {date_obj.strftime('%A, %B %d').replace(' 0', ' ')}")
+                                            except:
+                                                changes.append("time")
+                                        
+                                        if changes:
+                                            change_desc = " and ".join(changes)
+                                            agent_message = f"I found the recurring '{current_summary}' series. Update the {change_desc} for ALL instances?"
+                                        else:
+                                            agent_message = f"I found the recurring '{current_summary}' series, but I'm not sure what changes you'd like to make."
+                                        
+                                        draft_msg = Message.objects.create(
+                                            conversation=convo,
+                                            sender='agent',
+                                            text=agent_message,
+                                            message_type='event_update_confirmation',
+                                            content=response_content,
+                                        )
+                                        response_content['message_id'] = draft_msg.id
+                                        agent_response_text = agent_message
+                                    else:
+                                        # Couldn't get master, fall back to asking which one
+                                        response_type = 'text'
+                                        event_list = []
+                                        for i, evt in enumerate(matches[:5], 1):
+                                            title = evt.get('summary', 'Untitled')
+                                            start = evt.get('start', {})
+                                            if start.get('dateTime'):
+                                                dt = datetime.fromisoformat(start['dateTime'].replace('Z', '+00:00')).astimezone(tz)
+                                                time_str = dt.strftime('%I:%M %p on %b %d').lstrip('0')
+                                                event_list.append(f"{i}. {title} ({time_str})")
+                                            else:
+                                                event_list.append(f"{i}. {title}")
+                                        
+                                        agent_response_text = f"I found {len(matches)} events matching '{summary_query}'. Which one would you like to update?\\n\\n" + "\\n".join(event_list)
+                                        Message.objects.create(conversation=convo, sender='agent', text=agent_response_text, message_type='text')
+                                except Exception as e:
+                                    print(f"Error fetching master event: {e}")
+                                    # Fall back to asking which one
+                                    response_type = 'text'
+                                    event_list = []
+                                    for i, evt in enumerate(matches[:5], 1):
+                                        title = evt.get('summary', 'Untitled')
+                                        start = evt.get('start', {})
+                                        if start.get('dateTime'):
+                                            dt = datetime.fromisoformat(start['dateTime'].replace('Z', '+00:00')).astimezone(tz)
+                                            time_str = dt.strftime('%I:%M %p on %b %d').lstrip('0')
+                                            event_list.append(f"{i}. {title} ({time_str})")
+                                        else:
+                                            event_list.append(f"{i}. {title}")
+                                    
+                                    agent_response_text = f"I found {len(matches)} events matching '{summary_query}'. Which one would you like to update?\\n\\n" + "\\n".join(event_list)
+                                    Message.objects.create(conversation=convo, sender='agent', text=agent_response_text, message_type='text')
+                            else:
+                                # Normal case - ask which one
+                                response_type = 'text'
+                                event_list = []
+                                for i, evt in enumerate(matches[:5], 1):
+                                    title = evt.get('summary', 'Untitled')
+                                    start = evt.get('start', {})
+                                    if start.get('dateTime'):
+                                        dt = datetime.fromisoformat(start['dateTime'].replace('Z', '+00:00')).astimezone(tz)
+                                        time_str = dt.strftime('%I:%M %p on %b %d').lstrip('0')
+                                        event_list.append(f"{i}. {title} ({time_str})")
+                                    else:
+                                        event_list.append(f"{i}. {title}")
+                                
+                                agent_response_text = f"I found {len(matches)} events matching '{summary_query}'. Which one would you like to update?\\n\\n" + "\\n".join(event_list)
+                                Message.objects.create(conversation=convo, sender='agent', text=agent_response_text, message_type='text')
+                        
+                        else:
+                            response_type = 'text'
+                            agent_response_text = f"I couldn't find any event matching '{summary_query}'{f' on {target_date}' if target_date else ''}."
+                            Message.objects.create(conversation=convo, sender='agent', text=agent_response_text, message_type='text')
+
 
 
                 elif action == 'list_events':
@@ -1462,7 +2314,9 @@ def chat_process(request):
                     except Exception:
                         tz = get_current_timezone()
 
-
+                    # Initialize start_date and end_date BEFORE use
+                    start_date = None
+                    end_date = None
 
                     # Anchor to current/relative week if the user asked for it,
                     # even if the AI returned stale absolute dates.
@@ -1496,8 +2350,7 @@ def chat_process(request):
                             start_date, end_date = _override_week_range(0)
 
                     # Parse provided start/end dates or infer from text
-                    start_date = None
-                    end_date = None
+                    # Only override if not already set from week detection
                     
                     # First, try to parse the dates provided by AI
                     if raw_start_date:
@@ -1774,13 +2627,36 @@ def chat_process(request):
                                     
                                     event_summary = "; ".join(event_summary_parts[:7])  # Limit to prevent token overflow
                                     
+                                    # Determine if events are in past, present, or future
+                                    today_date = datetime.now(tz).date()
+                                    try:
+                                        start_dt = datetime.fromisoformat(start_date + 'T00:00:00').date()
+                                        end_dt = datetime.fromisoformat(end_date + 'T00:00:00').date()
+                                        
+                                        if end_dt < today_date:
+                                            time_context = "PAST events (already happened)"
+                                        elif start_dt > today_date:
+                                            time_context = "FUTURE events (upcoming)"
+                                        elif start_dt == today_date and end_dt == today_date:
+                                            time_context = "TODAY's events (current day)"
+                                        else:
+                                            time_context = "events spanning PAST, PRESENT, and/or FUTURE"
+                                    except:
+                                        time_context = "events"
+                                    
                                     ai_prompt = f"""The user just viewed their {range_type} schedule with {len(items)} total event(s). 
+
+                                        CRITICAL: These are {time_context}. Your remark MUST reflect the correct time perspective.
 
                                         Events breakdown: {event_summary}
 
                                         Generate a friendly, personalized 1-2 sentence closing remark that:
+                                        - Uses appropriate tense: past events = "you had/were busy", present = "you have", future = "you've got/ahead"
+                                        - For PAST events, reflect on what they had scheduled (e.g., "Looks like you had a packed Monday")
+                                        - For FUTURE events, look forward to what's coming (e.g., "You've got a busy day ahead")
+                                        - For TODAY, use present tense (e.g., "You have a full schedule today")
                                         - Acknowledges their schedule (busy/light/balanced)
-                                        - Mentions specific patterns if notable (e.g., "Friday is packed", "weekend is free")
+                                        - Mentions specific patterns if notable (e.g., "Friday was packed", "weekend is free")
                                         - Offers help with scheduling
                                         - Keep it warm and conversational
                                         - Add an emoji if appropriate

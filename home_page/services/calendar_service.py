@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from allauth.socialaccount.models import SocialAccount, SocialToken
 from django.conf import settings
 from google.oauth2.credentials import Credentials
@@ -40,19 +40,32 @@ class GoogleCalendarService: # helper class to encapsulate Calendar API calls pe
         except Exception as e:
             raise Exception(f'Failed to initialize Google Calendar service: {e}')
 
-    def list_events(self, calendar_id='primary', time_min=None, time_max=None): # to list the user's calendar events in a time period i.e from time_min to time_max
-        now = time_min or datetime.now(timezone.utc).isoformat()  # if the user passes in a time_min, use that. Otherwise use current timestamp
-        # Google still expects the trailing “Z” for RFC3339 UTC
-        if now.endswith('+00:00'):
-            now = now[:-6] + 'Z'
+    def list_events(self, calendar_id='primary', time_min=None, time_max=None):
+        """List calendar events in a time period from time_min to time_max.
+        
+        Args:
+            calendar_id: Calendar ID, defaults to 'primary'
+            time_min: Minimum time (RFC3339), if None will search from far past
+            time_max: Maximum time (RFC3339), if None will search far into future
+        """
+        # Allow searching past events by not defaulting to 'now'
+        # If time_min is not provided, use a date far in the past
+        if time_min is None:
+            # Default to 1 year ago to allow retrieving past events
+            one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
+            time_min = one_year_ago.isoformat()
+        
+        # Ensure proper RFC3339 format with 'Z' suffix for UTC
+        if time_min.endswith('+00:00'):
+            time_min = time_min[:-6] + 'Z'
 
         return self.service.events().list(
             calendarId=calendar_id,
-            timeMin=now,
+            timeMin=time_min,
             timeMax=time_max,
             singleEvents=True,
             orderBy='startTime'
-        ).execute().get('items',[]) # send the request to Google's servers with a list of event objects or an empty list if none is found
+        ).execute().get('items', [])
     
     def list_calendars(self):
         return self.service.calendarList().list().execute().get("items", [])
@@ -65,6 +78,9 @@ class GoogleCalendarService: # helper class to encapsulate Calendar API calls pe
     
     def delete_event(self, calendar_id, event_id):
         return self.service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+
+    def get_event(self, calendar_id, event_id):
+        return self.service.events().get(calendarId=calendar_id, eventId=event_id).execute()
     
     def find_free_slots(
         self,
@@ -76,7 +92,7 @@ class GoogleCalendarService: # helper class to encapsulate Calendar API calls pe
     ):
         """
         Returns Google Calendar free/busy data between start_date and end_date.
-        • start_date / end_date   ISO date-strings or “YYYY-MM-DD”.
+        • start_date / end_date   ISO date-strings or "YYYY-MM-DD".
         """
         if attendees is None:
             attendees = ["primary"]
