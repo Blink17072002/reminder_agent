@@ -2382,12 +2382,14 @@ def chat_process(request):
                         start_date = datetime(today_local.year, 1, 1).date().isoformat()
                         end_date = datetime(today_local.year, 12, 31).date().isoformat()
 
+                    queries = norm.get('queries')
+
                     # Build RFC3339 boundaries in UTC 'Z'
                     # Here we keep it simple by assuming all-day window(s)
                     time_min = f"{start_date}T00:00:00Z"
                     time_max = f"{end_date}T23:59:59Z"
                     try:
-                        items = gcal.list_events('primary', time_min=time_min, time_max=time_max, q=query)
+                        items = gcal.list_events('primary', time_min=time_min, time_max=time_max, q=query, queries=queries)
 
                         def _fmt_when(ev):
                             start = (ev.get('start') or {})
@@ -2523,26 +2525,137 @@ def chat_process(request):
                             # Build formatted output
                             lines = []
                             
-                            # Add header with date range
+                            # Add header with AI-generated title
                             try:
                                 start_dt = datetime.fromisoformat(start_date + 'T00:00:00').date()
                                 end_dt = datetime.fromisoformat(end_date + 'T00:00:00').date()
                                 
-                                # Format header based on range type
-                                if range_type == 'day':
-                                    today_date = datetime.now(tz).date()
-                                    day_label = "Today's Schedule" if start_dt == today_date else f"Schedule for {start_dt.strftime('%A, %B %d, %Y')}"
-                                    lines.append(f"📅 {day_label}\n")
-                                elif range_type == 'week':
-                                    if start_dt.month == end_dt.month and start_dt.year == end_dt.year:
-                                        date_range = f"{start_dt.strftime('%B')} {start_dt.day}-{end_dt.day}, {start_dt.year}"
+                                # Generate AI title based on context
+                                title_generated = False
+                                try:
+                                    # Prepare context for AI
+                                    search_context = ""
+                                    if queries and isinstance(queries, list) and len(queries) > 0:
+                                        if len(queries) == 1:
+                                            search_context = f"searching for '{queries[0]}'"
+                                        elif len(queries) == 2:
+                                            search_context = f"searching for '{queries[0]}' and '{queries[1]}'"
+                                        else:
+                                            # Build quoted terms separately to avoid f-string backslash issue
+                                            quoted_terms = ', '.join(f"'{q}'" for q in queries[:-1])
+                                            search_context = f"searching for {quoted_terms}, and '{queries[-1]}'"
+                                    elif query:
+                                        search_context = f"searching for '{query}'"
+                                    
+                                    # Format date range
+                                    if start_dt == end_dt:
+                                        date_context = start_dt.strftime('%B %d, %Y')
+                                    elif start_dt.year == end_dt.year:
+                                        if start_dt.month == end_dt.month:
+                                            date_context = f"{start_dt.strftime('%B %d')}-{end_dt.day}, {start_dt.year}"
+                                        else:
+                                            date_context = f"{start_dt.strftime('%B %d')} - {end_dt.strftime('%B %d, %Y')}"
                                     else:
-                                        date_range = f"{start_dt.strftime('%B %d')} - {end_dt.strftime('%B %d, %Y')}"
-                                    lines.append(f"📅 Your Weekly Schedule - {date_range}\n")
-                                elif range_type == 'month':
-                                    lines.append(f"📅 Your Schedule for {start_dt.strftime('%B %Y')}\n")
-                                else:  # year
-                                    lines.append(f"📅 Your Schedule for {start_dt.strftime('%Y')}\n")
+                                        date_context = f"{start_dt.strftime('%B %Y')} - {end_dt.strftime('%B %Y')}"
+                                    
+                                    # Build AI prompt
+                                    ai_prompt = f"""Generate a short, natural title (max 10 words) for a calendar event list.
+
+Context:
+- User's query: "{user_input}"
+- {search_context if search_context else "showing all events"}
+- Date range: {date_context}
+- Found {len(items)} event(s)
+
+Rules:
+- Start with the calendar emoji 📅
+- Be concise and natural
+- Include the search terms if present
+- Include the time period
+- Examples:
+  * "📅 Bible study and Miracle hour - December 2025 to April 2026"
+  * "📅 Bible study in 2025"
+  * "📅 Your schedule for December 1-7, 2025"
+
+Generate only the title, nothing else:"""
+                                    
+                                    # Call AI to generate title
+                                    ai_title = ai_agent._get_claude_chat_response(
+                                        [{"role": "user", "content": ai_prompt}],
+                                        system_prompt="You are a helpful assistant that generates concise, natural calendar titles.",
+                                        temperature=0.7,
+                                        max_tokens=50
+                                    )
+                                    
+                                    if ai_title and ai_title.strip():
+                                        # Clean up the title (remove quotes if present)
+                                        ai_title = ai_title.strip().strip('"').strip("'")
+                                        lines.append(f"{ai_title}\n")
+                                        title_generated = True
+                                except Exception as e:
+                                    print(f"Error generating AI title: {e}")
+                                    # Fall through to template-based fallback
+                                
+                                # Fallback to template-based title if AI generation failed
+                                if not title_generated:
+                                    title_prefix = "📅 "
+                                    if queries and isinstance(queries, list) and len(queries) > 0:
+                                        # User searched for specific events
+                                        if len(queries) == 1:
+                                            search_term = queries[0].capitalize()
+                                        elif len(queries) == 2:
+                                            search_term = f"{queries[0].capitalize()} and {queries[1]}"
+                                        else:
+                                            search_term = f"{', '.join(q.capitalize() for q in queries[:-1])}, and {queries[-1]}"
+                                        
+                                        # Add contextual date range
+                                        if range_type == 'year':
+                                            lines.append(f"{title_prefix}{search_term} in {start_dt.strftime('%Y')}\n")
+                                        elif range_type == 'month':
+                                            lines.append(f"{title_prefix}{search_term} in {start_dt.strftime('%B %Y')}\n")
+                                        elif range_type == 'week':
+                                            if start_dt.month == end_dt.month and start_dt.year == end_dt.year:
+                                                date_range = f"{start_dt.strftime('%B')} {start_dt.day}-{end_dt.day}, {start_dt.year}"
+                                            else:
+                                                date_range = f"{start_dt.strftime('%B %d')} - {end_dt.strftime('%B %d, %Y')}"
+                                            lines.append(f"{title_prefix}{search_term} - {date_range}\n")
+                                        else:  # day
+                                            today_date = datetime.now(tz).date()
+                                            day_label = "today" if start_dt == today_date else f"on {start_dt.strftime('%A, %B %d, %Y')}"
+                                            lines.append(f"{title_prefix}{search_term} {day_label}\n")
+                                    elif query:
+                                        # User searched with a single query string
+                                        search_term = query.capitalize()
+                                        if range_type == 'year':
+                                            lines.append(f"{title_prefix}{search_term} in {start_dt.strftime('%Y')}\n")
+                                        elif range_type == 'month':
+                                            lines.append(f"{title_prefix}{search_term} in {start_dt.strftime('%B %Y')}\n")
+                                        elif range_type == 'week':
+                                            if start_dt.month == end_dt.month and start_dt.year == end_dt.year:
+                                                date_range = f"{start_dt.strftime('%B')} {start_dt.day}-{end_dt.day}, {start_dt.year}"
+                                            else:
+                                                date_range = f"{start_dt.strftime('%B %d')} - {end_dt.strftime('%B %d, %Y')}"
+                                            lines.append(f"{title_prefix}{search_term} - {date_range}\n")
+                                        else:  # day
+                                            today_date = datetime.now(tz).date()
+                                            day_label = "today" if start_dt == today_date else f"on {start_dt.strftime('%A, %B %d, %Y')}"
+                                            lines.append(f"{title_prefix}{search_term} {day_label}\n")
+                                    else:
+                                        # No search query - use generic title
+                                        if range_type == 'day':
+                                            today_date = datetime.now(tz).date()
+                                            day_label = "Today's Schedule" if start_dt == today_date else f"Schedule for {start_dt.strftime('%A, %B %d, %Y')}"
+                                            lines.append(f"{title_prefix}{day_label}\n")
+                                        elif range_type == 'week':
+                                            if start_dt.month == end_dt.month and start_dt.year == end_dt.year:
+                                                date_range = f"{start_dt.strftime('%B')} {start_dt.day}-{end_dt.day}, {start_dt.year}"
+                                            else:
+                                                date_range = f"{start_dt.strftime('%B %d')} - {end_dt.strftime('%B %d, %Y')}"
+                                            lines.append(f"{title_prefix}Your Weekly Schedule - {date_range}\n")
+                                        elif range_type == 'month':
+                                            lines.append(f"{title_prefix}Your Schedule for {start_dt.strftime('%B %Y')}\n")
+                                        else:  # year
+                                            lines.append(f"{title_prefix}Your Schedule for {start_dt.strftime('%Y')}\n")
                             except Exception:
                                 lines.append("📅 Your Schedule\n")
                             

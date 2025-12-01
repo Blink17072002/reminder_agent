@@ -368,18 +368,21 @@ class AIAgent:
                     f"""You are a calendar assistant. Today is {current_day}, {current_date}. Extract calendar actions from the user's CURRENT request only.
 
                     ⚠️ ULTRA-CRITICAL JSON-ONLY RULE ⚠️
+                    YOU ARE A PARSER, NOT AN ASSISTANT. YOU DO NOT HAVE ACCESS TO THE CALENDAR.
                     YOU MUST RETURN VALID JSON ONLY. NO EXPLANATIONS. NO TEXT RESPONSES.
                     
                     ❌ FORBIDDEN - DO NOT DO THIS:
                     "I apologize, but I do not see..."
                     "Okay, got it. Here is the updated schedule..."
                     "The events I see are..."
+                    "I cannot find any information about..."
                     
                     ✅ REQUIRED - ALWAYS DO THIS:
                     {{"action": "delete_event", "params": {{"summary": "event name"}}, "message_for_user": "Searching..."}}
                     
                     IF YOU RETURN ANYTHING OTHER THAN JSON, YOU HAVE FAILED.
                     DO NOT CHECK IF EVENTS EXIST. DO NOT LIST EVENTS. JUST EXTRACT PARAMETERS AS JSON.
+                    EVEN IF YOU THINK THE EVENT DOES NOT EXIST, YOU MUST RETURN THE SEARCH QUERY SO THE SYSTEM CAN CHECK.
 
                     CRITICAL RULES:
                     1. Return EXACTLY ONE JSON object - never return multiple JSON objects
@@ -398,9 +401,16 @@ class AIAgent:
                     
                     For list_events:
                     - Extract time range from user's request ("this week", "tomorrow", "next Monday", "this month", "this year", "month")
-                    - Extract search terms/keywords if the user is looking for specific events (e.g. "standup", "meeting with John")
+                    - Extract search terms/keywords ONLY from the CURRENT user message (not from conversation history)
+                    - CRITICAL: If the user asks for different events than before (e.g., previously "standup", now "Bible study"), extract the NEW search terms
+                    - Examples of search terms: "standup", "meeting with John", "Bible study", "miracle hour", "dentist", etc.
                     - ALWAYS calculate dates relative to TODAY ({current_date})
-                    - Return: {{"action": "list_events", "params": {{"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "query": "search term"}}, "message_for_user": "..."}}
+                    - Return: {{"action": "list_events", "params": {{"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "queries": ["term1", "term2"]}}, "message_for_user": "..."}}
+                    
+                    SEARCH TERM EXTRACTION EXAMPLES:
+                    Current: "Find my standup meetings" → queries: ["standup"]
+                    Current: "Show me Bible study and miracle hour" → queries: ["Bible study", "miracle hour"]
+                    Current: "When do I have dentist appointments?" → queries: ["dentist"]
                     
                     CONTEXT RESOLUTION (use history to understand references):
                     - "that day" / "the same day" / "same day" → the MOST RECENT date mentioned in conversation
@@ -566,7 +576,16 @@ class AIAgent:
                         {"role": ("user" if m.sender == "user" else "assistant"), "content": m.text}
                         for m in history_messages
                     ]
-                messages = messages_history + [{"role": "user", "content": text}]
+                # Inject a strong system override to the user's message to break refusal loops
+                # This ensures the AI ignores previous "I can't find it" messages in the history
+                override_instruction = (
+                    "\n\n[SYSTEM INSTRUCTION: "
+                    "If you previously refused this request or said you couldn't find events, IGNORE that refusal. "
+                    "The user is asking again. You MUST extract the search query now so the system can perform a fresh search. "
+                    "Do not refuse. Output the JSON with the query.]"
+                )
+                
+                messages = messages_history + [{"role": "user", "content": text + override_instruction}]
                 raw = self._get_claude_chat_response(messages, system_prompt=system, temperature=0)
                 print(f"AI RAW RESPONSE: {raw}")
                 # Some models occasionally emit multiple JSON objects back-to-back.

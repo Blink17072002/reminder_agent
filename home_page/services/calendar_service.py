@@ -40,14 +40,16 @@ class GoogleCalendarService: # helper class to encapsulate Calendar API calls pe
         except Exception as e:
             raise Exception(f'Failed to initialize Google Calendar service: {e}')
 
-    def list_events(self, calendar_id='primary', time_min=None, time_max=None, q=None):
-        """List calendar events in a time period from time_min to time_max.
+    def list_events(self, calendar_id='primary', time_min=None, time_max=None, q=None, queries=None):
+        """
+        List events from the calendar.
         
         Args:
-            calendar_id: Calendar ID, defaults to 'primary'
-            time_min: Minimum time (RFC3339), if None will search from far past
-            time_max: Maximum time (RFC3339), if None will search far into future
-            q: Free text search terms to find events that match these terms
+            calendar_id: ID of the calendar to list events from
+            time_min: Start time (inclusive) in RFC3339 format
+            time_max: End time (exclusive) in RFC3339 format
+            q: Single free text search term (legacy)
+            queries: List of free text search terms. If provided, searches for EACH term and merges results (OR logic).
         """
         # Allow searching past events by not defaulting to 'now'
         # If time_min is not provided, use a date far in the past
@@ -60,14 +62,42 @@ class GoogleCalendarService: # helper class to encapsulate Calendar API calls pe
         if time_min.endswith('+00:00'):
             time_min = time_min[:-6] + 'Z'
 
-        return self.service.events().list(
-            calendarId=calendar_id,
-            timeMin=time_min,
-            timeMax=time_max,
-            q=q,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute().get('items', [])
+        # Helper to fetch events for a single query
+        def fetch(query_term):
+            return self.service.events().list(
+                calendarId=calendar_id,
+                timeMin=time_min,
+                timeMax=time_max,
+                q=query_term,
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute().get('items', [])
+
+        all_events = {}
+        
+        # Handle multiple queries (OR logic)
+        if queries and isinstance(queries, list):
+            for query in queries:
+                if query:
+                    items = fetch(query)
+                    for item in items:
+                        all_events[item['id']] = item
+        
+        # Handle single query if provided (and no list queries, or in addition)
+        if q and not queries:
+             items = fetch(q)
+             for item in items:
+                all_events[item['id']] = item
+        
+        # If no queries at all, just list everything (default behavior)
+        if not q and not queries:
+            return fetch(None)
+
+        # Convert dict back to list and sort by start time
+        unique_events = list(all_events.values())
+        unique_events.sort(key=lambda x: x.get('start', {}).get('dateTime') or x.get('start', {}).get('date') or '')
+        
+        return unique_events
     
     def list_calendars(self):
         return self.service.calendarList().list().execute().get("items", [])
