@@ -8,6 +8,20 @@ marked.setOptions({
     mangle: false
 });
 
+// Auto-dismiss Flash Messages
+document.addEventListener('DOMContentLoaded', function() {
+    const messagesContainer = document.querySelector('.messages-container');
+    if (messagesContainer) {
+        setTimeout(function() {
+            const alerts = messagesContainer.querySelectorAll('.alert');
+            alerts.forEach(function(alert) {
+                alert.style.opacity = '0';
+                setTimeout(function() { alert.remove(); }, 500); // Remove after fade out
+            });
+        }, 5000);
+    }
+});
+
 // Get the Google Calendar icon URL from a data attribute on the body
 // Make sure this attribute is set in your base template or view context
 // You'll need to add something like: <body data-google-calendar-icon-url="{% static 'path/to/your/google_calendar_icon.svg' %}"> in your base template or assistant.html
@@ -135,7 +149,7 @@ function removeWelcomeMessage() {
         const messageDiv = welcomeMessageBubble.closest('.message');
         if (messageDiv) {
             messageDiv.remove();
-            console.log("Removed template-rendered welcome message.");
+            // Log removed("Removed template-rendered welcome message.");
         }
     }
 }
@@ -146,54 +160,50 @@ function removeWelcomeMessage() {
 // Function to type text character by character into a bubble element
 // Includes callback for actions after typing finishes (like scrolling or title update)
 // Modified to correctly handle rendering final markdown content
-function typeText(element, rawText, speed = 3, callback = null) {
-    let i = 0;
-    const textStr = String(rawText); // Use rawText provided, ensure it's a string
-
-    // Check if the element is still in the DOM before attempting to clear/type
+// Function to type text character by character into a bubble element
+// Includes callback for actions after typing finishes (like scrolling or title update)
+// Uses timestamp-based logic to support background tab persistence and consistent speed
+function typeText(element, rawText, speed = 10, callback = null) { // Increased default speed (lower ms)
+    const textStr = String(rawText);
+    
+    // Check if the element is still in the DOM
     if (!document.body.contains(element)) {
         console.warn("Attempted to type text into element not in DOM. Aborting animation.");
-        if (callback) {
-            callback();
-        }
+        if (callback) callback();
         return;
     }
 
-    // Clear content initially for typing animation
+    // Clear content initially
     element.textContent = "";
-    // Add a temporary class to indicate typing is in progress (optional, for styling)
     element.classList.add('typing-in-progress');
 
-    function nextChar() {
-        // Re-check if element is still in DOM during recursion
+    const startTime = Date.now();
+    
+    function update() {
         if (!document.body.contains(element)) {
-            console.warn("Element removed from DOM during typing animation. Aborting.");
-            if (callback) {
-                callback();
-            }
+            if (callback) callback();
             return;
         }
 
-        if (i < textStr.length) {
-            // Use requestAnimationFrame for smoother rendering
-            requestAnimationFrame(() => {
-                element.textContent = textStr.substring(0, i + 1);
-                i++;
-                setTimeout(nextChar, speed);
-            });
-        } else {
-            // Once typing is done, remove typing class and parse markdown
-            element.classList.remove('typing-in-progress');
-            element.innerHTML = marked.parse(textStr); // Parse markdown to HTML
+        const now = Date.now();
+        const elapsed = now - startTime;
+        // Calculate how many characters should be shown based on elapsed time
+        const charIndex = Math.floor(elapsed / speed);
 
-            // Execute callback after animation finishes
-            if (callback) {
-                callback();
-            }
-            console.log("Typing animation finished.");
+        if (charIndex < textStr.length) {
+            // Update content to current index
+            element.textContent = textStr.substring(0, charIndex + 1);
+            requestAnimationFrame(update);
+        } else {
+            // Done
+            element.classList.remove('typing-in-progress');
+            element.innerHTML = marked.parse(textStr);
+            if (callback) callback();
+            // Log removed("Typing animation finished.");
         }
     }
-    nextChar(); // Start the animation
+    
+    requestAnimationFrame(update);
 }
 
 // Basic HTML escaping helper (important for injecting dynamic text into HTML)
@@ -459,7 +469,7 @@ function appendMessage(sender, responseData, isTyping = false, convoId = null, i
             // Remove bubble class for structured content
             contentContainer.classList.remove("bubble");
             const connectedEmail = responseContent?.email || 'Account';
-            console.log(connectedEmail)
+            // Log removed(connectedEmail)
             const connectedStatusHtml = `
                  <div class="connected-account-status">
                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -592,7 +602,7 @@ function updateRecentsTitle(convoId, newTitle) {
 
             // Move to top (optional, but common for most recent)
             recentsList.prepend(recentItem); // Move the updated item to the top
-            console.log(`Updated title for convo ID ${convoId} to "${plainTitle}".`);
+            // Log removed(`Updated title for convo ID ${convoId} to "${plainTitle}".`);
         } else {
             console.warn(`Link element with class 'recent-link' not found within list item for convo ID ${convoId}.`);
         }
@@ -1479,7 +1489,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- Initialize Persisted Event Cards ---
     const previewContainers = document.querySelectorAll('.event-preview-card-container');
     if (previewContainers.length > 0) {
-        console.log(`Found ${previewContainers.length} persisted event preview cards.`);
+        // Log removed(`Found ${previewContainers.length} persisted event preview cards.`);
         previewContainers.forEach(container => {
             try {
                 const eventContent = JSON.parse(container.dataset.eventContent);
@@ -1496,7 +1506,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const deletionContainers = document.querySelectorAll('.event-deletion-card-container');
     if (deletionContainers.length > 0) {
-        console.log(`Found ${deletionContainers.length} persisted event deletion cards.`);
+        // Log removed(`Found ${deletionContainers.length} persisted event deletion cards.`);
         deletionContainers.forEach(container => {
             try {
                 const eventContent = JSON.parse(container.dataset.eventContent);
@@ -1512,13 +1522,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // --- Initial Page Load Rendering & Welcome Message Handling ---
-    console.log("DOMContentLoaded: Checking for initial messages to render/animate.");
+    // Log removed("DOMContentLoaded: Checking for initial messages to render/animate.");
     // Re-query initial messages to ensure we get the correct elements after DOM load
     //  const initialMessagesOnLoad = chatMessagesContainer ? chatMessagesContainer.querySelectorAll('.message') : [];
 
 
     if (initialMessagesOnLoad.length > 0) {
-        console.log(`Found ${initialMessagesOnLoad.length} initial messages.`);
+        // Log removed(`Found ${initialMessagesOnLoad.length} initial messages.`);
         let welcomeMessageFoundAndAnimated = false;
 
         initialMessagesOnLoad.forEach(messageDiv => {
@@ -1529,14 +1539,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 const rawText = bubble.dataset.raw; // Get raw text from bubble, not messageDiv
                 // If it's the welcome message rendered by Django, animate it
                 if (bubble.dataset.welcomeMessage === 'true') { // Check for the data attribute on the bubble
-                    console.log("Found initial welcome message (from template). Starting animation.");
+                    // Log removed("Found initial welcome message (from template). Starting animation.");
                     welcomeMessageFoundAndAnimated = true;
                     // Use typeText for animation. Pass scrollChatToBottom as callback.
                     // Pass the raw text for animation and final rendering
-                    typeText(bubble, rawText || bubble.innerHTML, 10, scrollChatToBottom); // Use data-raw or innerHTML as fallback
+                    typeText(bubble, rawText || bubble.innerHTML, 3, scrollChatToBottom); // Use data-raw or innerHTML as fallback
                 } else if (sender === 'agent' && rawText !== undefined) {
                     // Render markdown for other agent messages statically if raw text is available
-                    console.log("Rendering markdown for agent message:", rawText);
+                    // Log removed("Rendering markdown for agent message:", rawText);
                     bubble.innerHTML = marked.parse(rawText);
                 } else if (sender === 'user') {
                     // Render plain text for user messages statically
@@ -1561,7 +1571,7 @@ document.addEventListener("DOMContentLoaded", () => {
         //  With the current view logic, this block should ideally not be hit when `is_new_conversation_page` is true
         //  because the view always adds a temporary welcome message in that case.
         //  If you change the view to *not* render the temporary message, you would need JS to add it here.
-        console.log("No initial messages found from template.");
+        // Log removed("No initial messages found from template.");
         scrollChatToBottom(); // Scroll to ensure input is visible
     }
 
@@ -1610,9 +1620,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
 
-            // Remove the welcome message if it's present (only happens on the very first message in an empty convo)
-            // Do this AFTER appending the user message and before appending the agent's placeholder
-            removeWelcomeMessage();
+            // removeWelcomeMessage() call removed to prevent disappearance
 
 
             // Show intent confirmation modal BEFORE processing
@@ -1655,7 +1663,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
                 const data = await response.json();
-                console.log("AJAX response data received:", data);
+                // Log removed("AJAX response data received:", data);
 
                 // Update intent confirmation with the received intent
                 if (intentElement && data.intent) {
@@ -1681,8 +1689,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
                         // Debug logging (remove when issues are resolved)
                         if (responseType === 'calendar_action_request' && responseContent?.action === 'unknown') {
-                            console.log("⚠️ Got 'unknown' action - this usually means AI returned multiple JSON objects");
-                            console.log("Response details:", responseContent?.details);
+                            // Log removed("⚠️ Got 'unknown' action - this usually means AI returned multiple JSON objects");
+                            // Log removed("Response details:", responseContent?.details);
                         }
 
                         // Determine if it's the first message exchange *based on the backend response*
@@ -1839,7 +1847,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                         // --- START: Handle new conversation creation & URL update ---
                         if (isFirstActualMessageFromBackend && data.convo_id) {
-                            console.log("Backend created/identified a new conversation with this message. Updating URL and sidebar.");
+                            // Log removed("Backend created/identified a new conversation with this message. Updating URL and sidebar.");
 
                             // Update the browser URL to the new conversation
                             const newConvoUrl = `/agent/assistant/${data.convo_id}/`;
@@ -1895,7 +1903,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             scrollChatToBottom();
 
                         } else {
-                            console.log("This POST was to an existing conversation. Ensuring active state).");
+                            // Log removed("This POST was to an existing conversation. Ensuring active state).");
                             // Ensure the correct item is marked active if not a new convo created by this post
                             const recentsList = document.getElementById('recents-list');
                             if (recentsList && data.convo_id) {
@@ -1924,7 +1932,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                         // If it was the first message but backend returned an error, update title immediately with fallback
                         if (data.is_first_actual_message && data.convo_id && data.convo_title) {
-                            console.log("First message, but backend returned error. Triggering immediate title update (likely fallback title).");
+                            // Log removed("First message, but backend returned error. Triggering immediate title update (likely fallback title).");
                             updateRecentsTitle(data.convo_id, data.convo_title);
                         } else if (data.convo_id && data.convo_title) {
                             updateRecentsTitle(data.convo_id, data.convo_title);
@@ -1932,10 +1940,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     } else {
                         // Handle cases where backend returns no agent_response_data or error
-                        console.log("Backend response had no agent_response_data or error.");
+                        // Log removed("Backend response had no agent_response_data or error.");
                         // If it was the first message but backend returned nothing useful, update title
                         if (data.is_first_actual_message && data.convo_id && data.convo_title) {
-                            console.log("First message, but no agent response. Triggering immediate title update (likely fallback title).");
+                            // Log removed("First message, but no agent response. Triggering immediate title update (likely fallback title).");
                             updateRecentsTitle(data.convo_id, data.convo_title);
                         } else if (data.convo_id && data.convo_title) {
                             updateRecentsTitle(data.convo_id, data.convo_title);
@@ -1963,7 +1971,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const errorConvoId = (currentConvoIdFromUrl && uuidRegex.test(currentConvoIdFromUrl)) ? currentConvoIdFromUrl : null;
 
                 if (errorConvoId) { // Best-effort title update
-                    console.log("JS error on first message. Triggering immediate title update (fallback).");
+                    // Log removed("JS error on first message. Triggering immediate title update (fallback).");
                     updateRecentsTitle(errorConvoId, "Error occurred");
                 }
 
@@ -2055,7 +2063,7 @@ function sendUserMessage(messageText, conversationId, inputElement) {
 
     // For new conversations, we don't need a conversationId
     // The backend will create one for us
-    console.log("sendUserMessage called with:", { messageText, conversationId, hasInputElement: !!inputElement });
+    // Log removed("sendUserMessage called with:", { messageText, conversationId, hasInputElement: !!inputElement });
 
     // Show the user message immediately
     const chatBox = $('#chat-box');
@@ -2113,7 +2121,7 @@ function sendUserMessage(messageText, conversationId, inputElement) {
                     'X-CSRFToken': csrftoken
                 },
                 success: function (response) {
-                    console.log("Message sent successfully, processing response:", response);
+                    // Log removed("Message sent successfully, processing response:", response);
                     // Remove the thinking indicator
                     $('#agent-thinking').remove();
 
@@ -2148,7 +2156,7 @@ function sendUserMessage(messageText, conversationId, inputElement) {
                     // --- Handle New Conversation Creation & Recents Update (if it was the first message) ---
                     // This logic runs if the backend confirmed it was the first message and created a new convo
                     if (response.is_first_actual_message && response.convo_id) {
-                        console.log("First message in new convo → updating URL & sidebar");
+                        // Log removed("First message in new convo → updating URL & sidebar");
 
                         const newUrl = `/agent/assistant/${response.convo_id}/`;
 
@@ -2251,26 +2259,28 @@ function displayAgentMessage(messageText) {
     const tempDiv = $('<div>').html(parsedMessageHtml);
     const plainTextContent = tempDiv.text(); // Get only the text content
 
-    let i = 0;
-    const typingSpeed = 3; // milliseconds (adjust as desired for animation speed)
+    // Start the typing animation using time-based logic
+    const startTime = Date.now();
+    const speed = 10; // Faster speed (ms per char)
 
     function typeWriter() {
-        if (i < plainTextContent.length) {
-            // Append characters of the plain text content for animation
-            textElement.append(plainTextContent.charAt(i));
-            i++;
+        const now = Date.now();
+        const elapsed = now - startTime;
+        const charIndex = Math.floor(elapsed / speed);
+
+        if (charIndex < plainTextContent.length) {
+            textElement.text(plainTextContent.substring(0, charIndex + 1));
             chatBox.scrollTop(chatBox[0].scrollHeight);
-            setTimeout(typeWriter, typingSpeed);
+            requestAnimationFrame(typeWriter);
         } else {
-            // Animation finished - replace the plain text with the full parsed HTML
-            textElement.html(parsedMessageHtml); // <-- Replace with HTML
-            newMessage.removeClass('new-message'); // Remove class after animation
-            chatBox.scrollTop(chatBox[0].scrollHeight); // Final scroll
+            // Animation finished
+            textElement.html(parsedMessageHtml); 
+            newMessage.removeClass('new-message'); 
+            chatBox.scrollTop(chatBox[0].scrollHeight); 
         }
     }
 
-    // Start the typing animation
-    typeWriter();
+    requestAnimationFrame(typeWriter);
 
 }
 
@@ -2358,74 +2368,8 @@ $(document).ready(function () {
     chatBox.scrollTop(chatBox[0].scrollHeight);
 
     // --- Welcome Message Animation on Initial Page Load / New Chat ---
-    const body = $('body');
-    const isNewConversationPage = body.data('is-new-conversation');
-    const welcomeMessageText = body.data('welcome-message-text');
-
-    console.log("Document ready. isNewConversationPage:", isNewConversationPage);
-    console.log("Welcome message text from data attribute:", welcomeMessageText);
-
-    if (isNewConversationPage && welcomeMessageText) {
-        console.log("New conversation page detected, animating welcome message.");
-
-        // Dynamically create the HTML for the agent's welcome message
-        const welcomeMessageHtml = `
-            <div class="message agent-message">
-              <div class="avatar agent-avatar">
-                 ${window.agentAvatar}
-              </div>
-              <div class="message-content">
-                 <div class="message-bubble">
-                     <div class="message-text">
-                         
-                     </div>
-                 </div>
-              </div>
-            </div>
-        `;
-
-        // Append the created HTML to the chat box
-        chatBox.append(welcomeMessageHtml);
-        console.log("Welcome message HTML appended.");
-
-        // Find the message-text element within the newly added message
-        const newMessageElement = chatBox.find('.agent-message:last .message-text');
-        console.log("New message element found:", newMessageElement.length > 0);
-
-        if (newMessageElement.length) {
-            // Unescape HTML entities in the welcome message text before typing
-            // Using jQuery's text() method to unescape
-            const unescapedWelcomeText = $('<div>').html(welcomeMessageText).text();
-            console.log("Unescaped welcome message text:", unescapedWelcomeText);
-
-
-            // Use your existing typing animation logic
-            let i = 0;
-            const typingSpeed = 3; // Adjust as desired
-            // Use the unescaped text for typing
-            const fullText = unescapedWelcomeText;
-
-            function typeWriter() {
-                if (i < fullText.length) {
-                    // Append one character at a time
-                    newMessageElement.append(fullText.charAt(i));
-                    i++;
-                    // Scroll to bottom after appending each character
-                    chatBox.scrollTop(chatBox[0].scrollHeight);
-                    setTimeout(typeWriter, typingSpeed);
-                } else {
-                    // Typing finished. Final scroll.
-                    newMessageElement.html(marked.parse(fullText)); // Apply markdown parsing
-                    chatBox.scrollTop(chatBox[0].scrollHeight);
-                    console.log("Typing animation finished.");
-                }
-            }
-            typeWriter(); // Start the animation
-
-        } else {
-            console.error("Could not find the message-text element for welcome message animation.");
-        }
-    }
+    // LOGIC REMOVED: Server now persists welcome message and templates render it.
+    // Animation is handled by the initialMessagesOnLoad block above.
     // --- END Welcome Message Animation ---
 
     // --- Markdown Rendering for Messages Loaded from Database ---
@@ -2441,7 +2385,7 @@ $(document).ready(function () {
     //     const messageText = messageInput.val().trim();
     //     if (messageText) {
     //         const conversationId = chatForm.data('initial-convo-id');
-    //         console.log("Send button clicked - Using conversation ID:", conversationId);
+    //         // Log removed("Send button clicked - Using conversation ID:", conversationId);
     //         sendUserMessage(messageText, conversationId, messageInput[0]);
     //     }
     // });
@@ -2453,7 +2397,7 @@ $(document).ready(function () {
     //         const messageText = messageInput.val().trim();
     //         if (messageText) {
     //             const conversationId = chatForm.data('initial-convo-id');
-    //             console.log("Enter key pressed - Using conversation ID:", conversationId);
+    //             // Log removed("Enter key pressed - Using conversation ID:", conversationId);
     //             sendUserMessage(messageText, conversationId, messageInput[0]);
     //         }
     //     }
@@ -2467,8 +2411,8 @@ $(document).ready(function () {
         const convoId = listItem.data('convo-id'); // Get the conversation ID from data attribute
         const deleteUrl = listItem.data('delete-url'); // Get the delete URL from data attribute
 
-        console.log("Delete button click detected for convo ID:", convoId);
-        console.log("Delete URL:", deleteUrl);
+        // Log removed("Delete button click detected for convo ID:", convoId);
+        // Log removed("Delete URL:", deleteUrl);
 
         // Basic validation
         if (!convoId || !deleteUrl) {
@@ -2488,15 +2432,15 @@ $(document).ready(function () {
                 headers: { 'X-CSRFToken': csrftoken }, // Send CSRF token in header
 
                 success: function (response) {
-                    console.log("Delete request success:", response);
+                    // Log removed("Delete request success:", response);
                     if (response.success) {
                         // Remove the list item from the DOM
                         listItem.remove();
-                        console.log(`Conversation ${convoId} removed from recents.`);
+                        // Log removed(`Conversation ${convoId} removed from recents.`);
 
                         // Handle redirect if a redirect URL is provided by the backend
                         if (response.redirect_url) {
-                            console.log("Redirecting to:", response.redirect_url);
+                            // Log removed("Redirecting to:", response.redirect_url);
                             window.location.href = response.redirect_url;
                         } else {
                             // Optional fallback: if no redirect URL and the deleted item was active,
@@ -2529,7 +2473,7 @@ $(document).ready(function () {
                 }
             });
         } else {
-            console.log("Delete action cancelled by user.");
+            // Log removed("Delete action cancelled by user.");
         }
     })
 
@@ -2651,6 +2595,100 @@ function updateIntentConfirmation(element, intent) {
 
     // Keep the container visible so it can be reused for the agent response without a reload.
 }
+
+
+
+
+/* 
+   --------------------------------------------------
+   JS FROM settings.html (intl-tel-input)
+   --------------------------------------------------
+*/
+document.addEventListener('DOMContentLoaded', function() {
+    const input = document.querySelector('#whatsapp_number');
+    const form = document.querySelector('#settings-form');
+    
+    // Check idempotency using a data attribute
+    if (input && form && !input.dataset.itiInitialized) {
+        input.dataset.itiInitialized = "true";
+
+        // Initialize the plugin
+        if (window.intlTelInput) {
+            const iti = window.intlTelInput(input, {
+                utilsScript: 'https://cdn.jsdelivr.net/npm/intl-tel-input@18.2.1/build/js/utils.js',
+                separateDialCode: true,
+                initialCountry: 'auto',
+                geoIpLookup: function(callback) {
+                    fetch('https://ipapi.co/json')
+                    .then(function(res) { return res.json(); })
+                    .then(function(data) { callback(data.country_code); })
+                    .catch(function() { callback('us'); });
+                },
+                preferredCountries: ['us', 'gb', 'ng'], // Added NG based on user context
+            });
+
+            // Intercept form submission to set full number
+            form.addEventListener('submit', function(e) {
+                e.preventDefault(); // Stop submission
+                
+                if (input.value.trim()) {
+                    if (iti.isValidNumber()) {
+                        // Get the full E.164 number
+                        const fullNumber = iti.getNumber();
+                        // Update the input value
+                        input.value = fullNumber;
+                        // Submit
+                        form.submit();
+                    } else {
+                        // Attempt to resolve best guess if invalid
+                        const fullNumber = iti.getNumber();
+                        input.value = fullNumber; 
+                        form.submit();
+                    }
+                } else {
+                    form.submit(); // Submit empty
+                }
+            });
+        }
+    }
+});
+
+
+
+/* 
+   --------------------------------------------------
+   JS FROM settings.html (Morning Briefing Toggle)
+   --------------------------------------------------
+*/
+document.addEventListener('DOMContentLoaded', function() {
+    const briefingCheckbox = document.getElementById('morning_briefing_enabled');
+    const briefingTimeGroup = document.getElementById('briefing-time-group');
+    
+    if (briefingCheckbox && briefingTimeGroup) {
+        briefingCheckbox.addEventListener('change', function() {
+            briefingTimeGroup.style.display = this.checked ? 'block' : 'none';
+        });
+    }
+});
+
+/* 
+   --------------------------------------------------
+   Mobile Responsiveness Handling
+   --------------------------------------------------
+*/
+document.addEventListener('DOMContentLoaded', function() {
+    // Check if mobile
+    if (window.innerWidth <= 768) {
+        const sidebarWrapper = document.querySelector('.sidebar-wrapper');
+        const body = document.body;
+        
+        // Default to collapsed on mobile if not already
+        if (sidebarWrapper && !sidebarWrapper.classList.contains('collapsed')) {
+            sidebarWrapper.classList.add('collapsed');
+            body.classList.add('sidebar-collapsed');
+        }
+    }
+});
 
 
 

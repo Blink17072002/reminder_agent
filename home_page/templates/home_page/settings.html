@@ -1,0 +1,101 @@
+{% extends 'home_page/base.html' %}
+{% load static %}
+
+{% block title %}Settings - Meeting Scheduler{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/intl-tel-input@18.2.1/build/css/intlTelInput.css">
+{% endblock %}
+
+{% block content %}
+<div class="settings-container">
+    <div class="settings-card">
+        <div class="settings-header">
+            <h2>Notification Settings</h2>
+        </div>
+
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert {% if message.tags %}alert-{{ message.tags }}{% endif %}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        {% endif %}
+
+        <form method="post" id="settings-form">
+            {% csrf_token %}
+            
+            {% if next_url %}
+            <input type="hidden" name="next" value="{{ next_url }}">
+            {% endif %}
+            
+            <div class="form-group">
+                <label class="form-label" for="whatsapp_number">WhatsApp Number</label>
+                <input type="tel" id="whatsapp_number" name="whatsapp_number" class="form-input" 
+                       value="{{ preferences.whatsapp_number|default:'' }}">
+                <p class="form-text">Select your country and enter your number.</p>
+            </div>
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="whatsapp_enabled" name="whatsapp_enabled" class="checkbox-input"
+                       {% if preferences.whatsapp_enabled %}checked{% endif %}>
+                <label for="whatsapp_enabled" style="cursor:pointer">Enable WhatsApp Reminders</label>
+            </div>
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="email_enabled" name="email_enabled" class="checkbox-input"
+                       {% if preferences.email_enabled %}checked{% endif %}>
+                <label for="email_enabled" style="cursor:pointer">Enable Email Reminders</label>
+            </div>
+
+            <div class="form-group" style="margin-top: 20px;">
+                <label class="form-label" for="reminder_lead_time">Reminder Lead Time (Minutes)</label>
+                <input type="number" id="reminder_lead_time" name="reminder_lead_time" class="form-input" 
+                       value="{{ preferences.reminder_lead_time|default:30 }}" min="5" max="1440">
+                <p class="form-text">How many minutes before the event should I remind you?</p>
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 24px 0;">
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="morning_briefing_enabled" name="morning_briefing_enabled" class="checkbox-input"
+                       {% if preferences.morning_briefing_enabled %}checked{% endif %}>
+                <label for="morning_briefing_enabled" style="cursor:pointer">Enable Daily Morning Briefing</label>
+            </div>
+
+            <div class="form-group" id="briefing-time-group" {% if not preferences.morning_briefing_enabled %}style="display:none;"{% endif %}>
+                <label class="form-label" for="morning_briefing_time">Briefing Time (Morning)</label>
+                <div class="select-wrapper">
+                    <select id="morning_briefing_time" name="morning_briefing_time" class="form-input">
+                        {% with current_time=preferences.morning_briefing_time|time:'H:i' %}
+                        <option value="05:00" {% if current_time == '05:00' %}selected{% endif %}>05:00 AM</option>
+                        <option value="05:30" {% if current_time == '05:30' %}selected{% endif %}>05:30 AM</option>
+                        <option value="06:00" {% if current_time == '06:00' %}selected{% endif %}>06:00 AM</option>
+                        <option value="06:30" {% if current_time == '06:30' %}selected{% endif %}>06:30 AM</option>
+                        <option value="07:00" {% if current_time == '07:00' %}selected{% endif %}>07:00 AM</option>
+                        <option value="07:30" {% if current_time == '07:30' %}selected{% endif %}>07:30 AM</option>
+                        <option value="08:00" {% if current_time == '08:00' %}selected{% endif %}>08:00 AM</option>
+                        <option value="08:30" {% if current_time == '08:30' %}selected{% endif %}>08:30 AM</option>
+                        <option value="09:00" {% if current_time == '09:00' %}selected{% endif %}>09:00 AM</option>
+                        <option value="09:30" {% if current_time == '09:30' %}selected{% endif %}>09:30 AM</option>
+                        <option value="10:00" {% if current_time == '10:00' %}selected{% endif %}>10:00 AM</option>
+                        <option value="10:30" {% if current_time == '10:30' %}selected{% endif %}>10:30 AM</option>
+                        <option value="11:00" {% if current_time == '11:00' %}selected{% endif %}>11:00 AM</option>
+                        <option value="11:30" {% if current_time == '11:30' %}selected{% endif %}>11:30 AM</option>
+                        {% endwith %}
+                    </select>
+                </div>
+                <p class="form-text">Choose a morning time for your daily summary.</p>
+            </div>
+
+
+
+            <button type="submit" class="btn-save">Save Preferences</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/intl-tel-input@18.2.1/build/js/intlTelInput.min.js"></script>
+{% endblock %}

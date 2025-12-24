@@ -162,7 +162,7 @@ class GoogleCalendarService: # helper class to encapsulate Calendar API calls pe
         try:
             service = build('gmail', 'v1', credentials=self.creds)
             message = {
-                'raw': base64.urlsafe_b64encode(f'To: {to}\nSubject: {subject}\n\n{body}'.encode()).decode()
+                'raw': base64.urlsafe_b64encode(f'From: Reminder Agent <{to}>\nTo: {to}\nSubject: {subject}\n\n{body}'.encode()).decode()
             }
             return service.users().messages().send(userId='me', body=message).execute()
         except Exception as e:

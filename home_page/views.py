@@ -1,4 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
+from django.http import HttpResponse # Added for webhook response
+from .models import NotificationPreference, SentNotification # Added for webhook logic
+from django.utils import timezone # Added for snooze logic
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from django.http import JsonResponse, Http404
@@ -96,8 +99,27 @@ def assistant(request, convo_id=None, is_placeholder=False):
     # Fetch conversations ordered by creation date, newest first
     conversations = Conversation.objects.filter(user=user).order_by('-created_at')
 
-    # is_new_conversation_page determines if the frontend should animate the welcome message
-    is_new_conversation_page = False
+    
+    # Check if this is a freshly created conversation to trigger animation
+    # We can detect this if the conversation has exactly 1 message and it's from the agent (our welcome msg)
+    # AND if we pass a specific flag (e.g. from redirect) or just infer it.
+    # Simpler: just check if there is only 1 message.
+    # But wait, persistence means it's just a message. The USER wants it to "type out" if they just created it.
+    # We can pass a flag if referer was 'new_conversation' or via session.
+    
+    # Let's use the 'just_created' query param approach or similar if needed.
+    # Actually, the user said "continue whether I'm present... resume when I go back".
+    # This implies standard message rendering but with animation for the latest one if it's "fresh".
+    # Since we persist it, it's just a message.
+    # We'll leave standard rendering. If the user wants the *first* message to always animate on *first load*,
+    # we can check if len(messages) == 1 and sender=agent.
+    
+    # Remove prematurely defined context and logic block
+
+    if conversations.filter(id=convo_id).exists():
+        msg_count = Message.objects.filter(conversation_id=convo_id).count()
+        # Initial check, but we will refine this after fetching messages
+        
     convo = None # Initialize current conversation object
     messages_to_render = [] # Initialize messages list to pass to template
     welcome_message_for_frontend = None # Initialize welcome message text for frontend
@@ -109,20 +131,36 @@ def assistant(request, convo_id=None, is_placeholder=False):
     # Handle GET requests (loading the page)
     if request.method == "GET":
         if is_placeholder:
-            # Logic for the new chat placeholder state
-            print("GET request for new chat placeholder. Showing initial empty state.")
-            is_new_conversation_page = True # set flag for frontend animation
-            convo = None
-            messages_to_render = []
-            welcome_message_for_frontend = welcome_message_text_content # pass welcome message text
+            # Logic for the new chat: Create actual conversation immediately to persist welcome message
+            print("GET request for new chat. Creating persistent conversation with welcome message.")
             
-            # Add a placeholder to the conversations list for frontend rendering
-            class PlaceholderConvo:
-                id = "placeholder"
-                title = "New Chat"
-            conversations = list(conversations)
-            if not any(getattr(c, 'id', None) == "placeholder" for c in conversations):
-                conversations.insert(0, PlaceholderConvo())
+            # Create new conversation
+            new_convo = Conversation.objects.create(user=user, title="New Chat")
+            
+            # Generate AI welcome message
+            try:
+                ai_agent = AIAgent(user)
+                welcome_text = ai_agent.generate_welcome_message(user.first_name or "there")
+                
+                # Persist the welcome message
+                Message.objects.create(
+                    conversation=new_convo,
+                    sender='agent',
+                    text=welcome_text,
+                    message_type='text'
+                )
+            except Exception as e:
+                print(f"Error generating welcome message: {e}")
+                # Fallback to a simple message if AI fails (though generate_welcome_message has its own fallback)
+                Message.objects.create(
+                    conversation=new_convo,
+                    sender='agent',
+                    text="Hi! I'm your calendar assistant. How can I help you today?",
+                    message_type='text'
+                )
+
+            # Redirect to the new conversation
+            return redirect('home_page:assistant', convo_id=new_convo.id)
             
         elif convo_id:
             # --- Logic for loading an existing conversation (by ID in URL) ---
@@ -134,12 +172,17 @@ def assistant(request, convo_id=None, is_placeholder=False):
                 # Fetch all messages for this conversation (including structured ones)
                 messages_to_render = list(convo.messages.order_by('timestamp'))
 
-                # if an existing conversation is loaded, it's not a new chat state for animation
+                # by default, don't animate existing chats
                 is_new_conversation_page = False
 
-                # If a brand-new, message-less conversation was just opened,
-                # flag it so the frontend can run the welcome-message animation.
-                if len(messages_to_render) == 0:
+                # BUT if this is the database-persisted initial welcome message (single agent msg),
+                # allow animation so it feels like a fresh start.
+                if len(messages_to_render) == 1 and messages_to_render[0].sender == 'agent':
+                    is_new_conversation_page = True
+                    # No need to set welcome_message_for_frontend as it's in the message list
+                
+                # Fallback for empty (legacy)
+                elif len(messages_to_render) == 0:
                     is_new_conversation_page = True
                     welcome_message_for_frontend = welcome_message_text_content
 
@@ -275,7 +318,7 @@ def check_conflicts_proactively(start_dt, end_dt, gcal):
         
         return conflicts
     except Exception as e:
-        print(f"Error checking conflicts: {e}")
+        logger.error(f"Error checking conflicts: {e}")
         return []
 
 def find_alternative_times(requested_dt, duration_minutes, gcal, count=3):
@@ -330,8 +373,82 @@ def find_alternative_times(requested_dt, duration_minutes, gcal, count=3):
         
         return alternatives
     except Exception as e:
-        print(f"Error finding alternatives: {e}")
+        logger.error(f"Error finding alternatives: {e}")
         return []
+
+# Or ensure CsrfViewMiddleware is active and JS sends the token in header (as done above)
+@csrf_exempt
+def whatsapp_reply(request):
+    """
+    Handle incoming WhatsApp messages (webhooks).
+    Supports:
+    - OFF: Disable WhatsApp notifications
+    - SNOOZE: Snooze the last reminder for 10 minutes
+    """
+    if request.method == 'POST':
+        # 0. Validate Twilio Signature (Security)
+        # Skip validation only if DEBUG is True AND we accept it (optional, but good for local dev without ngrok auth)
+        if not settings.DEBUG:
+            from twilio.request_validator import RequestValidator
+            validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
+            
+            # The URL Twilio thinks it hit (must match exactly what you configured)
+            # request.build_absolute_uri() might return http depending on proxy headers
+            signature = request.META.get('HTTP_X_TWILIO_SIGNATURE', '')
+            url = request.build_absolute_uri()
+            
+            # Convert QueryDict to dict for validator
+            post_vars = request.POST.dict()
+
+            if not validator.validate(url, post_vars, signature):
+                return HttpResponse('Forbidden', status=403)
+
+        # Twilio sends 'From' as 'whatsapp:+123456789'
+        from_number = request.POST.get('From', '').replace('whatsapp:', '')
+        body = request.POST.get('Body', '').strip().upper()
+        
+        try:
+            # Find user by whatsapp number
+            # Try exact match, then with/without +
+            prefs = NotificationPreference.objects.filter(whatsapp_number=from_number).first()
+            if not prefs:
+                if from_number.startswith('+'):
+                     prefs = NotificationPreference.objects.filter(whatsapp_number=from_number[1:]).first()
+                else:
+                     prefs = NotificationPreference.objects.filter(whatsapp_number=f"+{from_number}").first()
+            
+            if not prefs:
+                logger.warning(f"WhatsApp reply from unknown number: {from_number}")
+                return HttpResponse('User not found', status=200)
+            
+            user = prefs.user
+            
+            if body == 'OFF':
+                prefs.whatsapp_enabled = False
+                prefs.save()
+                return HttpResponse('Disabled', status=200)
+            
+            elif body.startswith('SNOOZE'):
+                # Find the last sent reminder for this user
+                last_notif = SentNotification.objects.filter(
+                    user=user, 
+                    notification_type='whatsapp',
+                    status='sent'
+                ).order_by('-timestamp').first()
+                
+                if last_notif:
+                    # Update status to snoozed and timestamp to NOW (start of snooze period)
+                    last_notif.status = 'snoozed'
+                    last_notif.timestamp = timezone.now()
+                    last_notif.save()
+                    logger.info(f"Snoozed reminder for {user.username}")
+                
+                return HttpResponse('Snoozed', status=200)
+                
+        except Exception as e:
+            print(f"Error handling WhatsApp reply: {e}")
+            
+    return HttpResponse('OK', status=200)
 
 @csrf_exempt # <--- Add this decorator temporarily for testing JSON post (remove in production and handle CSRF properly)
 # Or better, handle CSRF token check manually if not using CsrfViewMiddleware globally
@@ -376,7 +493,8 @@ def chat_process(request):
             # is_first_actual_message = True # This logic needs adjustment if convo is new here
 
         # Now, message history logic needs the actual convo object
-        is_first_actual_message = convo.messages.count() == 0 if convo else True # Check count if convo exists
+        # Title generation check: If the title is still the default "New Chat", we should generate a title
+        is_first_actual_message = (convo.title == "New Chat") if convo else True
         
         if user_input:
             user_message = Message.objects.create(
@@ -2561,23 +2679,23 @@ def chat_process(request):
                                     # Build AI prompt
                                     ai_prompt = f"""Generate a short, natural title (max 10 words) for a calendar event list.
 
-Context:
-- User's query: "{user_input}"
-- {search_context if search_context else "showing all events"}
-- Date range: {date_context}
-- Found {len(items)} event(s)
+                                        Context:
+                                        - User's query: "{user_input}"
+                                        - {search_context if search_context else "showing all events"}
+                                        - Date range: {date_context}
+                                        - Found {len(items)} event(s)
 
-Rules:
-- Start with the calendar emoji 📅
-- Be concise and natural
-- Include the search terms if present
-- Include the time period
-- Examples:
-  * "📅 Bible study and Miracle hour - December 2025 to April 2026"
-  * "📅 Bible study in 2025"
-  * "📅 Your schedule for December 1-7, 2025"
+                                        Rules:
+                                        - Start with the calendar emoji 📅
+                                        - Be concise and natural
+                                        - Include the search terms if present
+                                        - Include the time period
+                                        - Examples:
+                                        * "📅 Bible study and Miracle hour - December 2025 to April 2026"
+                                        * "📅 Bible study in 2025"
+                                        * "📅 Your schedule for December 1-7, 2025"
 
-Generate only the title, nothing else:"""
+                                        Generate only the title, nothing else:"""
                                     
                                     # Call AI to generate title
                                     ai_title = ai_agent._get_claude_chat_response(
@@ -2817,7 +2935,8 @@ Generate only the title, nothing else:"""
             except Exception as e:
                 print(f"Error processing calendar action: {e}")
                 # traceback.print_exc()
-                error_message = f"Sorry, I encountered an error while processing your calendar request: {str(e)}"
+                # User-facing error message (don't show raw exception in production)
+                error_message = "Sorry, I encountered an error while processing your calendar request. The issue has been logged."
                 # Persist error messages so they survive reloads
                 Message.objects.create(
                     conversation=convo,
@@ -2850,7 +2969,7 @@ Generate only the title, nothing else:"""
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON received'}, status=400)
     except Exception as e:
-        print(f"Error in chat_process: {e}")
+        logger.error(f"Error acting on calendar: {e}")
         import traceback
         traceback.print_exc()
         
@@ -2925,3 +3044,66 @@ def connect_google(request):
     ]
     qs = urllib.parse.urlencode(params)
     return redirect(f"/accounts/google/login/?{qs}")
+
+@login_required
+def settings_view(request):
+    from .models import NotificationPreference
+    
+    # helper to ensure prefs exist
+    prefs, created = NotificationPreference.objects.get_or_create(user=request.user)
+    
+    # Get return URL from POST or GET
+    next_url = request.POST.get('next') or request.GET.get('next')
+
+    if request.method == "POST":
+        whatsapp_number = request.POST.get("whatsapp_number", "").strip()
+        whatsapp_enabled = request.POST.get("whatsapp_enabled") == "on"
+        email_enabled = request.POST.get("email_enabled") == "on"
+
+        # Basic validation: if enabling WA, number should be present
+        if whatsapp_enabled and not whatsapp_number:
+            messages.error(request, "Please enter a valid WhatsApp number to enable WhatsApp reminders.")
+        else:
+            # If user provides a number but doesn't format it perfectly, we could try to clean it
+            # For now, just save it.
+            prefs.whatsapp_number = whatsapp_number
+            prefs.whatsapp_enabled = whatsapp_enabled
+            prefs.email_enabled = email_enabled
+            
+            # New fields
+            try:
+                lead_time = int(request.POST.get("reminder_lead_time", 30))
+                prefs.reminder_lead_time = max(5, min(1440, lead_time))
+            except (ValueError, TypeError):
+                prefs.reminder_lead_time = 30
+                
+            prefs.morning_briefing_enabled = request.POST.get("morning_briefing_enabled") == "on"
+            
+            briefing_time_str = request.POST.get("morning_briefing_time")
+            if briefing_time_str:
+                try:
+                    # Validate time format HH:MM
+                    datetime.strptime(briefing_time_str, '%H:%M')
+                    prefs.morning_briefing_time = briefing_time_str
+                except ValueError:
+                    pass # Keep existing or default
+            
+            prefs.save()
+            messages.success(request, "Preferences saved successfully!")
+            
+            # Redirect to previous page if set, otherwise reload settings
+            if next_url and next_url != request.path:
+                return redirect(next_url)
+        
+        return redirect('home_page:settings')
+
+    # Sidebar needs conversations
+    conversations = Conversation.objects.filter(user=request.user).order_by('-created_at')
+
+    context = {
+        "preferences": prefs,
+        "conversations": conversations, 
+        "current_convo": None, # No chat selected
+        "next_url": next_url,
+    }
+    return render(request, "home_page/settings.html", context)

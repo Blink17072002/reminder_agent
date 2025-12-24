@@ -12,6 +12,10 @@ import traceback
 if TYPE_CHECKING:
     User = get_user_model()
 
+# Get a logger instance
+import logging
+logger = logging.getLogger(__name__)
+
 class AIAgent:
     def __init__(self, user: Any):
         self.user = user
@@ -35,7 +39,7 @@ class AIAgent:
     def _get_openai_response(self, messages, json_mode: bool = False, temperature: float = 0.7, max_tokens: int   = 500):
         """Helper to call OpenAI API."""
         if not self.openai_client:
-            print("Warning: OpenAI client not initialized. Cannot get response.")
+            logger.warning("OpenAI client not initialized. Cannot get response.")
             return None # Return None or raise error as appropriate
 
         try:
@@ -60,15 +64,15 @@ class AIAgent:
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
-            print(f"Error calling OpenAI API: {e}")
-            traceback.print_exc()
+            logger.error(f"Error calling OpenAI API: {e}")
+            logger.error(traceback.format_exc())
             # Depending on criticality, re-raise or return None
             raise e # Re-raise to be caught by calling handle method
 
     def _get_claude_response(self, messages):
         """Helper to call Claude API."""
         if not self.claude_client:
-            print("Warning: Claude client not initialized. Cannot get response.")
+            logger.warning("Claude client not initialized. Cannot get response.")
             return None # Return None or raise error as appropriate
         try:
             # Use instance model or passed model
@@ -96,8 +100,8 @@ class AIAgent:
             )
             return resp.content[0].text.strip()
         except Exception as e:
-            print(f"Error calling Claude API: {e}")
-            traceback.print_exc()
+            logger.error(f"Error calling Claude API: {e}")
+            logger.error(traceback.format_exc())
             # Depending on criticality, re-raise or return None
             raise e # Re-raise to be caught by calling handle method
 
@@ -131,7 +135,7 @@ class AIAgent:
     def determine_intent(self, text: str, conversation=None) -> str:
         """Uses Claude to classify the user's intent (calendar vs general_chat)."""
         if not self.claude_client:
-            print("Claude client not initialized, defaulting intent to general_chat.")
+            logger.warning("Claude client not initialized, defaulting intent to general_chat.")
             return 'general_chat'
 
         intent_prompt = (
@@ -180,13 +184,13 @@ class AIAgent:
             intent = self._get_claude_response(messages) # Model/temp handled in helper based on prompt
             intent = intent.strip().lower()
             if intent in ['calendar', 'general_chat']:
-                print(f"Intent detected: {intent}")
+                logger.info(f"Intent detected: {intent}")
                 return intent
             else:
-                print(f"AI returned unknown intent '{intent}', defaulting to general_chat.")
+                logger.warning(f"AI returned unknown intent '{intent}', defaulting to general_chat.")
                 return 'general_chat'
         except Exception as e:
-            print(f"Error determining intent: {e}, defaulting to general_chat.")
+            logger.error(f"Error determining intent: {e}, defaulting to general_chat.")
             # Log the full traceback if needed, but return a default to keep the app running
             # traceback.print_exc()
             return 'general_chat'
@@ -194,7 +198,7 @@ class AIAgent:
     def extract_calendar_parameters(self, text: str) -> dict:
         """Uses Claude to extract parameters for calendar actions."""
         if not self.claude_client:
-            print("Claude client not initialized. Cannot extract calendar parameters.")
+            logger.warning("Claude client not initialized. Cannot extract calendar parameters.")
             return {"action": "unknown", "params": {}, "details": "AI client not initialized."}
 
         parameter_prompt = (
@@ -286,23 +290,23 @@ class AIAgent:
         try:
             # Use the specific model for parameter extraction
             json_str = self._get_claude_response(messages) # Model/temp handled in helper based on prompt
-            print(f"Claude parameter extraction raw response: {json_str}")
+            logger.debug(f"Claude parameter extraction raw response: {json_str}")
             # Attempt to parse the JSON string
             try:
                  extracted_data = json.loads(json_str)
                  # Basic validation of the JSON structure
                  if not isinstance(extracted_data, dict) or 'action' not in extracted_data or 'params' not in extracted_data or 'details' not in extracted_data:
-                      print(f"AI returned invalid JSON structure: {extracted_data}")
+                      logger.warning(f"AI returned invalid JSON structure: {extracted_data}")
                       return {"action": "unknown", "params": {}, "details": "Failed to extract details."} # Default to unknown if format is wrong
                  return extracted_data
             except json.JSONDecodeError:
-                 print(f"AI returned non-JSON response for parameter extraction: {json_str}")
+                 logger.warning(f"AI returned non-JSON response for parameter extraction: {json_str}")
                  # If AI doesn't return valid JSON, treat as unknown intent
                  return {"action": "unknown", "params": {}, "details": "Failed to extract details."}
 
         except Exception as e:
-            print(f"Error extracting calendar parameters: {e}")
-            traceback.print_exc()
+            logger.error(f"Error extracting calendar parameters: {e}")
+            logger.error(traceback.format_exc())
             # If API call fails, treat as unknown intent
             return {"action": "unknown", "params": {}, "details": f"Failed to extract details: {e}"}
 
@@ -325,13 +329,13 @@ class AIAgent:
                 )
                 return {'type': 'text', 'response': title}
             except Exception as e:
-                print(f"Error generating title: {e}")
+                logger.error(f"Error generating title: {e}")
                 # Return a fallback or error message for title generation
                 return {'type': 'text', 'response': "Error generating title."}
 
         # --- Main message handling logic ---
         if not self.claude_client:
-            print("Claude client is not initialized.")
+            logger.warning("Claude client is not initialized.")
             return {
                 'type': 'text',
                 'response': "AI services are not configured. Please check the server settings."
@@ -339,13 +343,13 @@ class AIAgent:
 
         # 1. Determine Intent (Calendar or General Chat)
         intent = self.determine_intent(text, conversation)
-        print(f"Message intent: {intent}")
+        logger.info(f"Message intent: {intent}")
 
         # 2. Handle based on Intent
         if intent == 'calendar':
             # Check Google Connection Status FIRST for calendar intents
             if not self.is_google_connected():
-                print("Calendar intent detected, but Google not connected. Requesting connection.")
+                logger.info("Calendar intent detected, but Google not connected. Requesting connection.")
                 return {
                     'type': 'needs_connection',
                     'content': {
@@ -358,7 +362,7 @@ class AIAgent:
                 }
             else:
                 # If connected, proceed to extract calendar parameters
-                print("Google connected. Extracting calendar parameters with context...")
+                logger.info("Google connected. Extracting calendar parameters with context...")
                 # Get current date for AI context
                 from datetime import datetime
                 current_date = datetime.now().strftime("%Y-%m-%d")
@@ -587,7 +591,7 @@ class AIAgent:
                 
                 messages = messages_history + [{"role": "user", "content": text + override_instruction}]
                 raw = self._get_claude_chat_response(messages, system_prompt=system, temperature=0)
-                print(f"AI RAW RESPONSE: {raw}")
+                logger.debug(f"AI RAW RESPONSE: {raw}")
                 # Some models occasionally emit multiple JSON objects back-to-back.
                 # Extract the last valid JSON object to avoid "Extra data" errors.
 
@@ -623,7 +627,7 @@ class AIAgent:
                     
                     # Handle multiple JSON objects intelligently
                     if len(objs) > 1:
-                        print(f"⚠️ WARNING: AI returned {len(objs)} JSON objects instead of 1. Selecting the best valid action.")
+                        logger.warning(f"⚠️ WARNING: AI returned {len(objs)} JSON objects instead of 1. Selecting the best valid action.")
                         for i, obj in enumerate(objs):
                             action = obj.get('action', 'unknown')
                             print(f"   Object {i+1}: action={action}")
@@ -632,18 +636,18 @@ class AIAgent:
                         valid_actions = ['create_event', 'list_events', 'delete_event', 'find_free_slots']
                         for obj in objs:
                             if obj.get('action') in valid_actions:
-                                print(f"   Selected: {obj.get('action')} (first valid action)")
+                                logger.info(f"   Selected: {obj.get('action')} (first valid action)")
                                 return obj
                         
                         # If no valid actions found, take the last one as fallback
-                        print(f"   No valid actions found, using last object: {objs[-1].get('action')}")
+                        logger.warning(f"   No valid actions found, using last object: {objs[-1].get('action')}")
                         return objs[-1]
     
                     return objs[-1] if objs else None
 
                 extracted_data = _extract_last_json(raw)
                 if not isinstance(extracted_data, dict):
-                    print(f"Failed to parse AI response as JSON: {raw}")
+                    logger.error(f"Failed to parse AI response as JSON: {raw}")
                     # FIX: If the response is a plain text string (e.g. a refusal), return it as text
                     # instead of trying to parse it as a calendar action.
                     if isinstance(raw, str) and raw.strip() and not raw.strip().startswith('{'):
@@ -675,7 +679,7 @@ class AIAgent:
                 has_create_keywords = re.search(r'\b(?:create|schedule|book|add|make|set up|arrange)\b', text.lower())
                 
                 if action == 'create_event' and has_list_intent and not has_create_keywords:
-                    print(f"⚠️ WARNING: AI returned 'create_event' but user message appears to be a list/view request. Correcting to 'list_events'")
+                    logger.warning(f"⚠️ WARNING: AI returned 'create_event' but user message appears to be a list/view request. Correcting to 'list_events'")
                     action = 'list_events'
                     extracted_data['action'] = 'list_events'
 
@@ -685,7 +689,7 @@ class AIAgent:
                 error = extracted_data.get('error')
 
                 if error:
-                     print(f"Parameter extraction failed: {error}")
+                     logger.warning(f"Parameter extraction failed: {error}")
                      return {
                          'type': 'text',
                          'response': error # Return the error from extraction
@@ -696,7 +700,7 @@ class AIAgent:
                 present = params.get('present', {})
                 if missing:
                     clarification_text = self.build_missing_fields_message(present, missing, details)
-                    print(f"Extraction needs clarification: {clarification_text}")
+                    logger.info(f"Extraction needs clarification: {clarification_text}")
                     return { 'type': 'text', 'response': clarification_text }
                 
                 # If parameters are extracted and no clarification is needed,
@@ -705,7 +709,7 @@ class AIAgent:
                 # Avoid logging raw params because upstream models sometimes emit stale absolute
                 # datetimes (e.g., year 2023 or wrong hours). The view will normalize date/time
                 # using the user's message and timezone, so this log would be misleading.
-                print(f"Parameters extracted successfully. Signalling view to perform action: {action}.")
+                logger.info(f"Parameters extracted successfully. Signalling view to perform action: {action}.")
                 return {
                     'type': 'calendar_action_request', # New type to signal the view
                     'content': {
@@ -717,7 +721,7 @@ class AIAgent:
                 }
 
         else: # intent == 'general_chat'
-            print("General chat intent detected. Using Claude.")
+            logger.info("General chat intent detected. Using Claude.")
             try:
                 system = (
                     """You are a friendly calendar assistant. Your primary role is managing calendars, but you can engage in brief, relevant conversation.
@@ -738,22 +742,27 @@ class AIAgent:
                     - Proactive in offering calendar help when relevant
 
                     CAPABILITIES to mention when asked (only if not recently covered):
-                    1. **Create events** - Schedule meetings, appointments, reminders  
+                    1. **Create events** - Schedule meetings, appointments, reminders
                         Example: "Schedule team sync tomorrow at 2pm"
 
-                    2. **View calendar** - Check what's scheduled for any day/week  
+                    2. **List events** - Show upcoming meetings and appointments
+                        Example: "List my events for today"
+
+                    3. **View calendar** - Check what's scheduled for any day/week  
                         Example: "What's on my calendar Thursday?"
 
-                    3. **Find free time** - Locate available slots for scheduling  
+                    4. **Find free time** - Locate available slots for scheduling  
                         Example: "When am I free next week?"
 
-                    4. **Delete events** - Remove unwanted appointments  
+                    5. **Update events** - Change time, date, or title of existing events
+                        Example: "Move my 2pm meeting to 3pm"
+
+                    6. **Delete events** - Remove unwanted appointments  
                         Example: "Delete my dentist appointment"
 
-                    5. **Multi-calendar support** - Work across your Google calendars  
-                        Example: "Add to my work calendar"
 
                     When listing capabilities, use the format shown above with numbered items, bold capability names, descriptions on the same line ending with two spaces, and examples indented on the next line.
+                    When asked for capabilities, abilities or functions, DO NOT say " I can't directly create, delete, or modify events in your calendar,"
 
                     Keep responses warm but brief. Redirect off-topic conversations gently toward calendar assistance."""
                 )
@@ -777,7 +786,7 @@ class AIAgent:
                                     "content": m.text.strip()
                                 })
                     
-                    print(f"Including {len(messages_history)} unique history messages in general chat prompt.")
+                    logger.debug(f"Including {len(messages_history)} unique history messages in general chat prompt.")
 
                 # Add the current user message
                 messages_history.append({"role": "user", "content": text})
@@ -833,17 +842,23 @@ class AIAgent:
         if not self.claude_client:
             print("Claude client not initialised.")
             return None
-        params = dict(
-            model       = self.general_chat_model,
-            messages    = messages,
-            temperature = temperature,
-            max_tokens  = min(max_tokens, 800),   # increased cap for complete responses
-        )
-        if system_prompt:            # only include when non-empty
-            params["system"] = system_prompt
+            
+        try:
+            params = dict(
+                model       = self.general_chat_model,
+                messages    = messages,
+                temperature = temperature,
+                max_tokens  = min(max_tokens, 800),
+            )
+            if system_prompt:            # only include when non-empty
+                params["system"] = system_prompt
 
-        resp = self.claude_client.messages.create(**params)
-        return resp.content[0].text.strip()
+            resp = self.claude_client.messages.create(**params)
+            return resp.content[0].text.strip()
+        except Exception as e:
+            print(f"Error calling Claude API in chat_response: {e}")
+            traceback.print_exc()
+            return None
 
     def summarize_user_fields(self, text: str) -> dict:
         """Lightweight fallback to identify present/missing fields when main JSON parse fails."""
@@ -942,3 +957,122 @@ class AIAgent:
 
         optional = " Attendees' emails are optional."
         return (details + "\n" if details else "") + understood_text + " " + ask + optional
+
+    def generate_reminder_message(self, event_summary: str, start_dt: str, user_name: str) -> str:
+        """
+        Generates a warm, human-friendly reminder message using Claude.
+        """
+        if not self.claude_client:
+            return f"Hi {user_name}, this is a reminder for your event '{event_summary}' starting at {start_dt}."
+
+        system = (
+            """You are a helpful and warm personal assistant.
+            Your task is to write a short, friendly reminder message for a user's upcoming calendar event.
+            
+            GUIDELINES:
+            - Tone: Warm, natural, and helpful (not robotic).
+            - Content: Mention the event title and the start time clearly.
+            - Length: Keep it concise (1-2 sentences). fit for a WhatsApp message or short email.
+            - Format: Plain text only, no markdown.
+            - Emojis: Use 1-3 relevant emojis to make the message friendly and engaging (e.g., 📅, ⏰, 👋).
+            - Avoid: "2025-12-17T18:00:00+01:00" formats. Use natural time conventions (e.g., "at 6pm", "in 30 minutes").
+            
+            Example Input: Event 'Team Sync' at '2025-12-17 14:00' for 'Joshua'
+            Example Output: Hi Joshua! 👋 Just a heads up that your 'Team Sync' is starting soon at 2pm ⏰.
+            """
+        )
+
+        user_content = f"Write a reminder for {user_name} about their event '{event_summary}' which starts at {start_dt}."
+        
+        messages = [{"role": "user", "content": user_content}]
+        
+        try:
+            response = self._get_claude_chat_response(messages, system_prompt=system, temperature=0.7, max_tokens=100)
+            if response:
+                return response
+        except Exception as e:
+            print(f"Error generating AI reminder: {e}")
+        
+        # Fallback if AI fails
+        return f"Hi {user_name}, reminder: your event '{event_summary}' is starting at {start_dt}."
+
+    def generate_morning_briefing(self, user_name: str, events: list, weather_info: str = "Clear skies expected") -> str:
+        """
+        Generates a morning briefing summary using Claude.
+        """
+        if not self.claude_client:
+            return f"Good morning {user_name}! You have {len(events)} events today."
+
+        # Format events for the prompt
+        events_text = "No events scheduled for today."
+        if events:
+            events_lines = []
+            for e in events:
+                start = e['start'].get('dateTime', e['start'].get('date'))
+                summary = e.get('summary', 'No Title')
+                events_lines.append(f"- {summary} at {start}")
+            events_text = "\n".join(events_lines)
+
+        system_prompt = (
+            "You are a helpful, enthusiastic personal assistant. "
+            "Your goal is to provide a concise, motivating morning briefing."
+        )
+
+        user_prompt = (
+            f"Generate a morning briefing for {user_name}.\n\n"
+            f"Weather: {weather_info}\n"
+            f"Today's Schedule:\n{events_text}\n\n"
+            "Keep it encouraging, mention the weather, and summarize the day's load. "
+            "If there are key events, highlight them. Keep it under 150 words."
+        )
+
+        return self._get_claude_chat_response(
+            messages=[{"role": "user", "content": user_prompt}],
+            system_prompt=system_prompt,
+            temperature=0.7
+        )
+
+    def generate_welcome_message(self, user_name: str) -> str:
+        """
+        Generates a detailed, AI-driven welcome message guiding the user on features.
+        """
+        # Improved Fallback with Markdown for persistence if AI fails
+        fallback = (
+             f"**Hello {user_name}!** I'm your Meeting Scheduler Assistant. 👋\n\n"
+             "Here is how I can help you stay organized:\n\n"
+             "1. **Calendar Management**: Ask me to schedule, update, or delete events. \n"
+             "   *Example: \"Schedule a team sync for Friday at 2pm\"*\n"
+             "2. **Reminders**: I can send WhatsApp and Email reminders for your events.\n"
+             "3. **Morning Briefings**: I can provide a daily summary of your schedule.\n"
+             "4. **Settings**: Check the Settings page to configure your notification preferences.\n\n"
+             "Let's get started! Try scheduling something now."
+        )
+
+        if not self.claude_client:
+            return fallback
+
+        system_prompt = (
+            "You are a sophisticated, helpful AI assistant for a Meeting Scheduler application. "
+            "You have capabilities to manage Google Calendar events, send WhatsApp/Email reminders, "
+            "and provide daily morning briefings."
+        )
+
+        prompt = (
+            f"Generate a warm, detailed welcome message for a new user named {user_name}. "
+            "The message should be structured (you can use markdown like bullet points) and explain how to use your features:\n"
+            "1. **Calendar Management**: Explain you can schedule, update, list and delete events using natural language (e.g., 'Schedule a team sync for Friday').\n"
+            "2. **Reminders**: Mention you can send reminders via WhatsApp and Email for upcoming events (configurable in Settings).\n"
+            "3. **Morning Briefings**: Mention you can provide a daily summary of their schedule every morning.\n"
+            "4. **Settings**: Guide them to the Settings page to configure their notification preferences and numbers.\n\n"
+            "End with an encouraging CTA to try scheduling something now. Keep the tone professional yet friendly and enthusiastic. "
+            "**Use emojis generously to make the message visually engaging and friendly.**"
+        )
+
+        resp = self._get_claude_chat_response(
+             messages=[{"role": "user", "content": prompt}],
+             system_prompt=system_prompt,
+             temperature=0.7,
+             max_tokens=600 
+        )
+        
+        return resp if resp else fallback
